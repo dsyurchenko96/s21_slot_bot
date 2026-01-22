@@ -241,7 +241,7 @@ async def _search_loop(chat_id: int, cfg: SearchConfig, app: Application, dry_ru
             picked = pick_candidate_start(slots)
 
             if not picked:
-                await app.bot.send_message(chat_id, f"[{attempt}] нет слотов")
+                log.info(f"[{attempt}] no slots found")
             else:
                 start_time, staff_slot = picked
 
