@@ -1,0 +1,97 @@
+Q_GET_MODULE = """
+query calendarGetModule($moduleId: ID!) {
+  student {
+    getModuleById(goalId: $moduleId) {
+      id
+      moduleTitle
+      subjectTitle
+      goalExecutionType
+      currentTask {
+        ...CalendarStudentTask
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment CalendarStudentTask on StudentTask {
+  id
+  taskId
+  task {
+    id
+    studentTaskAdditionalAttributes {
+      ...CalendarStudentTaskAdditionalAttributes
+      __typename
+    }
+    assignmentType
+    __typename
+  }
+  lastAnswer {
+    id
+    __typename
+  }
+  __typename
+}
+
+fragment CalendarStudentTaskAdditionalAttributes on StudentTaskAdditionalAttributes {
+  cookiesCount
+  __typename
+}
+""".strip()
+
+Q_GET_SLOTS = """
+query calendarGetNameLessStudentTimeslotsForReview($from: DateTime!, $taskId: ID!, $to: DateTime!) {
+  student {
+    getNameLessStudentTimeslotsForReview(from: $from, taskId: $taskId, to: $to) {
+      checkDuration
+      projectReviewsInfo {
+        ...ProjectReviewsInfo
+        __typename
+      }
+      timeSlots {
+        ...CalendarNameLessTimeslot
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment ProjectReviewsInfo on ProjectReviewsInfo {
+  reviewByStudentCount
+  relevantReviewByStudentsCount
+  reviewByInspectionStaffCount
+  relevantReviewByInspectionStaffCount
+  p2pRequirementStatus
+  __typename
+}
+
+fragment CalendarNameLessTimeslot on CalendarNamelessTimeSlot {
+  start
+  end
+  validStartTimes
+  staffSlot
+  __typename
+}
+""".strip()
+
+Q_BOOK = """
+mutation calendarAddBookingToEventSlot($answerId: ID!, $startTime: DateTime!, $wasStaffSlotChosen: Boolean!, $isOnline: Boolean) {
+  student {
+    addBookingP2PToEventSlot(
+      answerId: $answerId
+      startTime: $startTime
+      wasStaffSlotChosen: $wasStaffSlotChosen
+      isOnline: $isOnline
+    ) {
+      id
+      __typename
+    }
+    __typename
+  }
+}
+
+""".strip()
