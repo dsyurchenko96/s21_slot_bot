@@ -36,7 +36,7 @@ def _extract_login_action(html_text: str, base_url: str) -> str:
     Ищем action у формы логина: .../login-actions/authenticate?...session_code=...&execution=...&tab_id=...
     """
     m = re.search(
-        r'action = "([^"]*login-actions/authenticate[^"]*)"',
+        r'action\s*=\s*"([^"]*login-actions/authenticate[^"]*)"',
         html_text,
         flags=re.IGNORECASE,
     )

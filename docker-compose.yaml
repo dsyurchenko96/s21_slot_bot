@@ -1,0 +1,11 @@
+services:
+  school21-bot:
+    build: .
+    restart: unless-stopped
+    environment:
+      TG_BOT_TOKEN: "${TG_BOT_TOKEN}"
+      S21_USERNAME: "${S21_USERNAME}"
+      S21_PASSWORD: "${S21_PASSWORD}"
+      BOT_TZ_OFFSET: "${BOT_TZ_OFFSET:-+03:00}"
+      POLL_INTERVAL_SEC: "${POLL_INTERVAL_SEC:-60}"
+      POLL_JITTER_SEC: "${POLL_JITTER_SEC:-8}"
