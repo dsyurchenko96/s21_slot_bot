@@ -237,6 +237,14 @@ async def _search_loop(chat_id: int, cfg: SearchConfig, app: Application, dry_ru
     while True:
         attempt += 1
         try:
+            now = datetime.now()
+            dt_to = datetime.strptime(cfg.to_iso_z, "%Y-%m-%dT%H:%M:%S.000Z")
+            if now >= dt_to:
+                await app.bot.send_message(
+                    chat_id,
+                    f"⌛️ Таймаут! Время на поиск слота истекло\nПроект: {cfg.project_name}\nID: {cfg.module_id}\n"
+                )
+                return
             slots = client.get_timeslots(task_id, cfg.from_iso_z, cfg.to_iso_z)
             picked = pick_candidate_start(slots)
 
@@ -265,6 +273,7 @@ async def _search_loop(chat_id: int, cfg: SearchConfig, app: Application, dry_ru
             # “слот уже забрали” и т.п.
             await app.bot.send_message(chat_id, f"[{attempt}] ошибка: {e}")
         except Exception as e:
+            log.exception("Unexpected error!")
             await app.bot.send_message(chat_id, f"[{attempt}] unexpected: {e}")
 
         await asyncio.sleep(interval + (0 if jitter <= 0 else (attempt % (jitter + 1))))
