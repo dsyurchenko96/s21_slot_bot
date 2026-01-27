@@ -4,7 +4,7 @@ import os
 import re
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -250,7 +250,10 @@ async def _search_loop(chat_id: int, cfg: SearchConfig, app: Application, dry_ru
                 return
             slots = client.get_timeslots(task_id, cfg.from_iso_z, cfg.to_iso_z)
             picked = pick_candidate_start(slots)
-            formatted_now = datetime.strftime(now, "%Y-%m-%dT%H:%M:%S")
+            offset_hours = 3
+            tz_plus_3 = timezone(timedelta(hours=offset_hours))
+            local_now = datetime.now(tz=tz_plus_3)
+            formatted_now = datetime.strftime(local_now, "%Y-%m-%d %H:%M:%S")
             if not picked:
                 message = f"{formatted_now} [{attempt}] no slots found"
                 log.info(message)
