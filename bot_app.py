@@ -297,8 +297,11 @@ async def stop_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.callback_query.message.reply_text("ℹ️ Поиск и так не запущен.")
 
 async def status(update: Update) -> None:
+    if not BOT_STATE.search_task or BOT_STATE.search_task.done():
+        await update.callback_query.message.reply_text("😴 Бот не запущен.")
+        return
     if not BOT_STATE.history:
-        await update.callback_query.message.reply_text("📭 События отсутствуют.")
+        await update.callback_query.message.reply_text("📭 Бот запущен, события пока отсутствуют.")
         return
     message = f"📬 Последние {HISTORY_LIMIT} событий:\n"
     for ind, log_line in enumerate(BOT_STATE.history):
