@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import re
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Tuple
@@ -24,6 +25,7 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("school21-bot")
 
 STATE_PROJECT_ID, STATE_FROM, STATE_TO, STATE_CONFIRM = range(4)
+HISTORY_LIMIT = 10
 
 
 @dataclass
@@ -38,6 +40,7 @@ class BotState:
     def __init__(self) -> None:
         self.search_task: Optional[asyncio.Task] = None
         self.search_cfg: Optional[SearchConfig] = None
+        self.history: deque[str] = deque(maxlen=HISTORY_LIMIT)
 
 
 BOT_STATE = BotState()
@@ -106,7 +109,7 @@ async def on_menu_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         return ConversationHandler.END
 
     if q.data == "status":
-        ...
+        await status(update)
         return ConversationHandler.END
 
     if q.data in ("start_dry", "start_book"):
@@ -247,9 +250,11 @@ async def _search_loop(chat_id: int, cfg: SearchConfig, app: Application, dry_ru
                 return
             slots = client.get_timeslots(task_id, cfg.from_iso_z, cfg.to_iso_z)
             picked = pick_candidate_start(slots)
-
+            formatted_now = datetime.strftime(now, "%Y-%m-%dT%H:%M:%S")
             if not picked:
-                log.info(f"[{attempt}] no slots found")
+                message = f"{formatted_now} [{attempt}] no slots found"
+                log.info(message)
+                BOT_STATE.history.append(message)
             else:
                 start_time, staff_slot = picked
 
@@ -287,6 +292,17 @@ async def stop_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.callback_query.message.reply_text("⛔ Поиск остановлен.")
     else:
         await update.callback_query.message.reply_text("ℹ️ Поиск и так не запущен.")
+
+async def status(update: Update) -> None:
+    if not BOT_STATE.history:
+        await update.callback_query.message.reply_text("📭 События отсутствуют.")
+        return
+    message = f"📬 Последние {HISTORY_LIMIT} событий:\n"
+    for ind, log_line in enumerate(BOT_STATE.history):
+        message += f"\t{ind + 1}) {log_line}"
+        if ind < HISTORY_LIMIT - 1:
+            message += "\n"
+    await update.callback_query.message.reply_text(message)
 
 
 def main() -> None:
