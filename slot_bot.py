@@ -247,7 +247,7 @@ class School21Client:
 
     def get_project_name(self, module_id: str) -> str:
         resp = self.sess.get(
-            f"https://platform.21-school.ru/services/21-school/api/v1/projects/{module_id}",
+            f"https://platform.21-school.ru/services/21-school/api/v1/participants/{self.username}/projects/{module_id}",
             headers={"Authorization": f"Bearer {self.tokens.access_token}"},
             timeout=self.timeout_s,
         )
