@@ -278,7 +278,7 @@ class School21Client:
         try:
             review_data = data["student"]["getNameLessStudentTimeslotsForReview"]
             timeslots: list[dict[str, Any]] = review_data["timeSlots"]
-            num_booked_reviews: int = review_data["relevantReviewByStudentsCount"]
+            num_booked_reviews: int = review_data["projectReviewsInfo"]["relevantReviewByStudentsCount"]
             return timeslots, num_booked_reviews
         except Exception as e:
             raise School21Error(f"Не смог распарсить timeSlots: {e}")
