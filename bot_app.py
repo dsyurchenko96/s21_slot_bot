@@ -4,8 +4,8 @@ import os
 import re
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
-from typing import Optional, Tuple
+from datetime import datetime, timezone, timedelta, UTC
+from enum import IntEnum, auto
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -20,12 +20,24 @@ from telegram.ext import (
 
 from slot_bot import School21Client, School21Error, pick_candidate_start
 
+logging.Formatter.converter = lambda *args: datetime.now(tz=timezone("Europe/Moscow")).timetuple()
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 log = logging.getLogger("school21-bot")
 
-STATE_PROJECT_ID, STATE_FROM, STATE_TO, STATE_CONFIRM = range(4)
 HISTORY_LIMIT = 10
+MAX_REVIEWS = 3
+
+
+class State(IntEnum):
+    PROJECT_ID = auto()
+    FROM = auto()
+    NUM_REVIEWS = auto()
+    TO = auto()
+    CONFIRM = auto()
 
 
 @dataclass
@@ -34,12 +46,13 @@ class SearchConfig:
     project_name: str
     from_iso_z: str
     to_iso_z: str
+    num_reviews: int
 
 
 class BotState:
     def __init__(self) -> None:
-        self.search_task: Optional[asyncio.Task] = None
-        self.search_cfg: Optional[SearchConfig] = None
+        self.search_task: asyncio.Task | None = None
+        self.search_cfg: SearchConfig | None = None
         self.history: deque[str] = deque(maxlen=HISTORY_LIMIT)
 
 
@@ -78,7 +91,7 @@ def _parse_dt_to_utc_z(text: str) -> str:
 
     # convert local -> UTC by subtracting offset
     dt_utc = dt_local.timestamp() - (delta_minutes * 60)
-    dt_utc_dt = datetime.utcfromtimestamp(dt_utc)
+    dt_utc_dt = datetime.fromtimestamp(dt_utc, UTC)
     return dt_utc_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
@@ -98,11 +111,11 @@ async def on_menu_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
     if q.data == "choose_project":
         await q.message.reply_text("Введи ID проекта (moduleId), например: 26566")
-        return STATE_PROJECT_ID
+        return State.PROJECT_ID
 
     if q.data == "back_time":
         await q.message.reply_text("Ок, введи *начальное* время заново.", parse_mode="Markdown")
-        return STATE_FROM
+        return State.FROM
 
     if q.data == "stop_search":
         await stop_search(update, context)
@@ -163,20 +176,38 @@ async def handle_project_id(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         project_name = client.get_project_name(module_id)
     except Exception as e:
         await update.message.reply_text(f"❌ Не смог найти проект по ID {module_id}.\nОшибка: {e}\nПопробуй другой ID.")
-        return STATE_PROJECT_ID
+        return State.PROJECT_ID
 
     context.user_data["module_id"] = module_id
     context.user_data["project_name"] = project_name
 
     await update.message.reply_text(
         f"✅ Ок, проект: {project_name}\n\n"
+        "Введи количество проверок.\n",
+        parse_mode="Markdown",
+    )
+    return State.NUM_REVIEWS
+
+
+async def handle_num_reviews(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        num_reviews = int(update.message.text)
+        if not 1 <= num_reviews <= 3:
+            raise ValueError("Количество проверок должно быть от 1 до 3.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ {e}\nПопробуй ещё раз.")
+        return State.NUM_REVIEWS
+
+    context.user_data["num_reviews"] = num_reviews
+    await update.message.reply_text(
+        f"Количество проверок: {num_reviews}\n\n"
         "Теперь введи *начальное* время.\n"
         "Формат:\n"
         "- ISO UTC: `2025-12-14T21:00:00.000Z`\n"
         "- или локально: `YYYY-MM-DD HH:MM` (часовой пояс берём из BOT_TZ_OFFSET, по умолчанию +03:00)\n",
         parse_mode="Markdown",
     )
-    return STATE_FROM
+    return State.FROM
 
 
 async def handle_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -184,7 +215,7 @@ async def handle_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         from_iso = _parse_dt_to_utc_z(update.message.text)
     except Exception as e:
         await update.message.reply_text(f"❌ {e}\nПопробуй ещё раз.")
-        return STATE_FROM
+        return State.FROM
 
     context.user_data["from_iso"] = from_iso
 
@@ -192,7 +223,7 @@ async def handle_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         "Теперь введи *конечное* время (тот же формат).",
         parse_mode="Markdown",
     )
-    return STATE_TO
+    return State.TO
 
 
 async def handle_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -200,14 +231,15 @@ async def handle_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         to_iso = _parse_dt_to_utc_z(update.message.text)
     except Exception as e:
         await update.message.reply_text(f"❌ {e}\nПопробуй ещё раз.")
-        return STATE_TO
+        return State.TO
 
     module_id = context.user_data["module_id"]
     project_name = context.user_data["project_name"]
+    num_reviews = context.user_data["num_reviews"]
     from_iso = context.user_data["from_iso"]
 
-    cfg = SearchConfig(module_id=module_id, project_name=project_name, from_iso_z=from_iso, to_iso_z=to_iso)
-    context.user_data["cfg"] = cfg  # сохраняем в user_data
+    cfg = SearchConfig(module_id=module_id, project_name=project_name, from_iso_z=from_iso, to_iso_z=to_iso, num_reviews=num_reviews)
+    context.user_data["cfg"] = cfg
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔎 Искать слоты", callback_data="start_dry")],
@@ -222,7 +254,7 @@ async def handle_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         f"Выбери режим:",
         reply_markup=kb,
     )
-    return STATE_CONFIRM
+    return State.CONFIRM
 
 
 async def _search_loop(chat_id: int, cfg: SearchConfig, app: Application, dry_run: bool) -> None:
@@ -237,6 +269,7 @@ async def _search_loop(chat_id: int, cfg: SearchConfig, app: Application, dry_ru
     log.info("Start search: module=%s task=%s answer=%s", cfg.module_id, task_id, answer_id)
 
     attempt = 0
+    num_found_slots = 0
     while True:
         attempt += 1
         try:
@@ -248,14 +281,10 @@ async def _search_loop(chat_id: int, cfg: SearchConfig, app: Application, dry_ru
                     f"⌛️ Таймаут! Время на поиск слота истекло\nПроект: {cfg.project_name}\nID: {cfg.module_id}\n"
                 )
                 return
-            slots = client.get_timeslots(task_id, cfg.from_iso_z, cfg.to_iso_z)
+            slots, num_already_booked = client.get_timeslots(task_id, cfg.from_iso_z, cfg.to_iso_z)
             picked = pick_candidate_start(slots)
-            offset_hours = 3
-            tz_plus_3 = timezone(timedelta(hours=offset_hours))
-            local_now = datetime.now(tz=tz_plus_3)
-            formatted_now = datetime.strftime(local_now, "%Y-%m-%d %H:%M:%S")
             if not picked:
-                message = f"{formatted_now} [{attempt}] no slots found"
+                message = f"[{attempt}] no slots found"
                 log.info(message)
                 BOT_STATE.history.append(message)
             else:
@@ -270,12 +299,20 @@ async def _search_loop(chat_id: int, cfg: SearchConfig, app: Application, dry_ru
                     return
 
                 booking_id = client.book(answer_id=answer_id, start_time_iso_z=start_time, staff_slot=staff_slot)
+                num_found_slots += 1
+                num_currently_booked = num_already_booked + 1
                 await app.bot.send_message(
                     chat_id,
                     f"✅ Успешно записался!\nПроект: {cfg.project_name}\nID: {cfg.module_id}\n"
-                    f"Start: {start_time}\nBooking: {booking_id}",
+                    f"Начало: {start_time}\nID брони: {booking_id}\n"
+                    f"Количество записей: {num_currently_booked}/{MAX_REVIEWS}\n"
                 )
-                return
+                if num_found_slots >= cfg.num_reviews or num_currently_booked >= MAX_REVIEWS:
+                    await app.bot.send_message(
+                        chat_id,
+                        "Все необходимые проверки найдены, останавливаю поиск..."
+                    )
+                    return
 
         except School21Error as e:
             # “слот уже забрали” и т.п.
@@ -296,6 +333,7 @@ async def stop_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     else:
         await update.callback_query.message.reply_text("ℹ️ Поиск и так не запущен.")
 
+
 async def status(update: Update) -> None:
     if not BOT_STATE.search_task or BOT_STATE.search_task.done():
         await update.callback_query.message.reply_text("😴 Бот не запущен.")
@@ -305,9 +343,8 @@ async def status(update: Update) -> None:
         return
     message = f"📬 Последние {HISTORY_LIMIT} событий:\n"
     for ind, log_line in enumerate(BOT_STATE.history):
-        message += f"\t{ind + 1}) {log_line}"
-        if ind < HISTORY_LIMIT - 1:
-            message += "\n"
+        message += f"\t{ind + 1}) {log_line}\n"
+    message += f"Указанное количество проверок: {BOT_STATE.search_cfg.num_reviews}"
     await update.callback_query.message.reply_text(message)
 
 
@@ -321,10 +358,11 @@ def main() -> None:
     conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(on_menu_click)],
         states={
-            STATE_PROJECT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_project_id)],
-            STATE_FROM: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_from)],
-            STATE_TO: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_to)],
-            STATE_CONFIRM: [CallbackQueryHandler(on_menu_click)],
+            State.PROJECT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_project_id)],
+            State.NUM_REVIEWS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_num_reviews)],
+            State.FROM: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_from)],
+            State.TO: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_to)],
+            State.CONFIRM: [CallbackQueryHandler(on_menu_click)],
         },
         fallbacks=[CommandHandler("start", start_cmd)],
         allow_reentry=True,

@@ -269,14 +269,17 @@ class School21Client:
         except Exception as e:
             raise School21Error(f"Не смог распарсить taskId/answerId из calendarGetModule: {e}")
 
-    def get_timeslots(self, task_id: str, from_iso_z: str, to_iso_z: str) -> List[Dict[str, Any]]:
+    def get_timeslots(self, task_id: str, from_iso_z: str, to_iso_z: str) -> tuple[list[dict[str, Any]], int]:
         data = self.graphql(
             "calendarGetNameLessStudentTimeslotsForReview",
             Q_GET_SLOTS,
             {"taskId": str(task_id), "from": from_iso_z, "to": to_iso_z},
         )
         try:
-            return data["student"]["getNameLessStudentTimeslotsForReview"]["timeSlots"] or []
+            review_data = data["student"]["getNameLessStudentTimeslotsForReview"]
+            timeslots: list[dict[str, Any]] = review_data["timeSlots"]
+            num_booked_reviews: int = review_data["relevantReviewByStudentsCount"]
+            return timeslots, num_booked_reviews
         except Exception as e:
             raise School21Error(f"Не смог распарсить timeSlots: {e}")
 
@@ -365,7 +368,7 @@ def main() -> int:
     while True:
         attempt += 1
         try:
-            slots = client.get_timeslots(task_id, args.from_iso, args.to_iso)
+            slots, _ = client.get_timeslots(task_id, args.from_iso, args.to_iso)
             picked = pick_candidate_start(slots)
             if not picked:
                 print(f"[{attempt}] нет слотов ({_utc_now_iso_z()})")
