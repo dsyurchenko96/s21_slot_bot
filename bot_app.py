@@ -347,9 +347,9 @@ async def status(update: Update) -> None:
     jitter = int(os.getenv("POLL_JITTER_SEC", "8"))
     last_ping_delta = now - BOT_STATE.last_ping
     if last_ping_delta < timedelta(seconds=(interval + jitter) * 2):
-        message = f"☠️ Бот не делал запросов в течение {last_ping_delta}\n"
-    else:
         message = f"✅ Бот ищет слоты (последний пинг {last_ping_delta} назад)\n"
+    else:
+        message = f"☠️ Бот не делал запросов в течение {last_ping_delta}\n"
     message += f"Указанное количество проверок: {BOT_STATE.search_cfg.num_reviews}"
     await update.callback_query.message.reply_text(message)
 
