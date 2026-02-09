@@ -19,8 +19,9 @@ from telegram.ext import (
 )
 
 from slot_bot import School21Client, School21Error, pick_candidate_start
+from zoneinfo import ZoneInfo
 
-logging.Formatter.converter = lambda *args: datetime.now(tz=timezone("Europe/Moscow")).timetuple()
+logging.Formatter.converter = lambda *args: datetime.now(tz=ZoneInfo("Europe/Moscow")).timetuple()
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -28,7 +29,6 @@ logging.basicConfig(
 )
 log = logging.getLogger("school21-bot")
 
-HISTORY_LIMIT = 10
 MAX_REVIEWS = 3
 
 
@@ -53,7 +53,7 @@ class BotState:
     def __init__(self) -> None:
         self.search_task: asyncio.Task | None = None
         self.search_cfg: SearchConfig | None = None
-        self.history: deque[str] = deque(maxlen=HISTORY_LIMIT)
+        self.last_ping: datetime | None = None
 
 
 BOT_STATE = BotState()
@@ -283,10 +283,10 @@ async def _search_loop(chat_id: int, cfg: SearchConfig, app: Application, dry_ru
                 return
             slots, num_already_booked = client.get_timeslots(task_id, cfg.from_iso_z, cfg.to_iso_z)
             picked = pick_candidate_start(slots)
+            BOT_STATE.last_ping = now
             if not picked:
                 message = f"[{attempt}] no slots found"
                 log.info(message)
-                BOT_STATE.history.append(message)
             else:
                 start_time, staff_slot = picked
 
@@ -338,12 +338,18 @@ async def status(update: Update) -> None:
     if not BOT_STATE.search_task or BOT_STATE.search_task.done():
         await update.callback_query.message.reply_text("😴 Бот не запущен.")
         return
-    if not BOT_STATE.history:
-        await update.callback_query.message.reply_text("📭 Бот запущен, события пока отсутствуют.")
+    if BOT_STATE.last_ping is None:
+        await update.callback_query.message.reply_text("📭 Бот запущен, запрос на поиск еще не был отправлен.")
         return
-    message = f"📬 Последние {HISTORY_LIMIT} событий:\n"
-    for ind, log_line in enumerate(BOT_STATE.history):
-        message += f"\t{ind + 1}) {log_line}\n"
+    now = datetime.now()
+    # TODO: refactor
+    interval = int(os.getenv("POLL_INTERVAL_SEC", "60"))
+    jitter = int(os.getenv("POLL_JITTER_SEC", "8"))
+    last_ping_delta = BOT_STATE.last_ping - now
+    if last_ping_delta < timedelta(seconds=(interval + jitter) * 2):
+        message = f"☠️ Бот не делал запросов в течение {last_ping_delta}\n"
+    else:
+        message = f"✅ Бот ищет слоты (последний пинг {last_ping_delta} назад)\n"
     message += f"Указанное количество проверок: {BOT_STATE.search_cfg.num_reviews}"
     await update.callback_query.message.reply_text(message)
 
