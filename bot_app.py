@@ -345,7 +345,7 @@ async def status(update: Update) -> None:
     # TODO: refactor
     interval = int(os.getenv("POLL_INTERVAL_SEC", "60"))
     jitter = int(os.getenv("POLL_JITTER_SEC", "8"))
-    last_ping_delta = BOT_STATE.last_ping - now
+    last_ping_delta = now - BOT_STATE.last_ping
     if last_ping_delta < timedelta(seconds=(interval + jitter) * 2):
         message = f"☠️ Бот не делал запросов в течение {last_ping_delta}\n"
     else:
