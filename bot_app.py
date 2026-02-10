@@ -54,6 +54,7 @@ class BotState:
         self.search_task: asyncio.Task | None = None
         self.search_cfg: SearchConfig | None = None
         self.last_ping: datetime | None = None
+        self.num_booked: int = 0
 
 
 BOT_STATE = BotState()
@@ -269,7 +270,6 @@ async def _search_loop(chat_id: int, cfg: SearchConfig, app: Application, dry_ru
     log.info("Start search: module=%s task=%s answer=%s", cfg.module_id, task_id, answer_id)
 
     attempt = 0
-    num_found_slots = 0
     while True:
         attempt += 1
         try:
@@ -282,13 +282,13 @@ async def _search_loop(chat_id: int, cfg: SearchConfig, app: Application, dry_ru
                 )
                 return
             slots, num_already_booked = client.get_timeslots(task_id, cfg.from_iso_z, cfg.to_iso_z)
-            if num_already_booked < num_found_slots:
+            if num_already_booked < BOT_STATE.num_booked:
                 await app.bot.send_message(
                     chat_id,
                     f"⚠️ Похоже, что проверка отменилась!\nПроект: {cfg.project_name}\nID: {cfg.module_id}\n"
-                    f"Количество записей: {num_already_booked}/{MAX_REVIEWS}\n"
+                    f"Количество записей: {BOT_STATE.num_booked}/{MAX_REVIEWS}\n"
                 )
-            num_found_slots = num_already_booked
+            BOT_STATE.num_booked = num_already_booked
             picked = pick_candidate_start(slots)
             BOT_STATE.last_ping = now
             if not picked:
@@ -304,14 +304,14 @@ async def _search_loop(chat_id: int, cfg: SearchConfig, app: Application, dry_ru
                         f"Если хочешь записаться — нажми /start → 'Записаться' и введи те же параметры (или я добавлю кнопку)."
                     )
                     return
-                if num_found_slots <= cfg.num_reviews:
+                if BOT_STATE.num_booked < cfg.num_reviews:
                     booking_id = client.book(answer_id=answer_id, start_time_iso_z=start_time, staff_slot=staff_slot)
-                    num_found_slots += 1
+                    BOT_STATE.num_booked += 1
                     await app.bot.send_message(
                         chat_id,
                         f"✅ Успешно записался!\nПроект: {cfg.project_name}\nID: {cfg.module_id}\n"
                         f"Начало: {start_time}\nID брони: {booking_id}\n"
-                        f"Количество записей: {num_found_slots}/{MAX_REVIEWS}\n"
+                        f"Количество записей: {BOT_STATE.num_booked}/{MAX_REVIEWS}\n"
                     )
                 # if num_found_slots >= cfg.num_reviews or num_currently_booked >= MAX_REVIEWS:
                 #     await app.bot.send_message(
@@ -356,7 +356,7 @@ async def status(update: Update) -> None:
         message = f"✅ Бот ищет слоты (последний пинг {last_ping_delta} назад)\n"
     else:
         message = f"☠️ Бот не делал запросов в течение {last_ping_delta}\n"
-    message += f"Указанное количество проверок: {BOT_STATE.search_cfg.num_reviews}"
+    message += f"Проверок: {BOT_STATE.num_booked}/{BOT_STATE.search_cfg.num_reviews}"
     await update.callback_query.message.reply_text(message)
 
 
