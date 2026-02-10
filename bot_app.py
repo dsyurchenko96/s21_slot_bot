@@ -282,6 +282,13 @@ async def _search_loop(chat_id: int, cfg: SearchConfig, app: Application, dry_ru
                 )
                 return
             slots, num_already_booked = client.get_timeslots(task_id, cfg.from_iso_z, cfg.to_iso_z)
+            if num_already_booked < num_found_slots:
+                await app.bot.send_message(
+                    chat_id,
+                    f"⚠️ Похоже, что проверка отменилась!\nПроект: {cfg.project_name}\nID: {cfg.module_id}\n"
+                    f"Количество записей: {num_already_booked}/{MAX_REVIEWS}\n"
+                )
+            num_found_slots = num_already_booked
             picked = pick_candidate_start(slots)
             BOT_STATE.last_ping = now
             if not picked:
@@ -297,22 +304,21 @@ async def _search_loop(chat_id: int, cfg: SearchConfig, app: Application, dry_ru
                         f"Если хочешь записаться — нажми /start → 'Записаться' и введи те же параметры (или я добавлю кнопку)."
                     )
                     return
-
-                booking_id = client.book(answer_id=answer_id, start_time_iso_z=start_time, staff_slot=staff_slot)
-                num_found_slots += 1
-                num_currently_booked = num_already_booked + 1
-                await app.bot.send_message(
-                    chat_id,
-                    f"✅ Успешно записался!\nПроект: {cfg.project_name}\nID: {cfg.module_id}\n"
-                    f"Начало: {start_time}\nID брони: {booking_id}\n"
-                    f"Количество записей: {num_currently_booked}/{MAX_REVIEWS}\n"
-                )
-                if num_found_slots >= cfg.num_reviews or num_currently_booked >= MAX_REVIEWS:
+                if num_found_slots <= cfg.num_reviews:
+                    booking_id = client.book(answer_id=answer_id, start_time_iso_z=start_time, staff_slot=staff_slot)
+                    num_found_slots += 1
                     await app.bot.send_message(
                         chat_id,
-                        "Все необходимые проверки найдены, останавливаю поиск..."
+                        f"✅ Успешно записался!\nПроект: {cfg.project_name}\nID: {cfg.module_id}\n"
+                        f"Начало: {start_time}\nID брони: {booking_id}\n"
+                        f"Количество записей: {num_found_slots}/{MAX_REVIEWS}\n"
                     )
-                    return
+                # if num_found_slots >= cfg.num_reviews or num_currently_booked >= MAX_REVIEWS:
+                #     await app.bot.send_message(
+                #         chat_id,
+                #         "Все необходимые проверки найдены, останавливаю поиск..."
+                #     )
+                #     return
 
         except School21Error as e:
             # “слот уже забрали” и т.п.
