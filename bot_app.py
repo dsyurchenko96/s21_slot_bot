@@ -186,7 +186,6 @@ async def handle_project_id(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await update.message.reply_text(
         f"✅ Ок, проект: {project_name}\n\n"
         "Введи количество проверок.\n",
-        parse_mode="Markdown",
     )
     return State.NUM_REVIEWS
 
