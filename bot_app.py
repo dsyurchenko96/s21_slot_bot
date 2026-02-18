@@ -271,44 +271,34 @@ async def run_bot_loop(inst: BotInstance, app: Application, manager: BotManager)
             slots, already_booked = client.get_timeslots(task_id, cfg.from_iso_z, cfg.to_iso_z)
             missing = cfg.required_reviews - int(already_booked)
 
-            # always subscribe: if cancellations happen, missing becomes >0 again -> keep looping
-            if missing <= 0:
-                inst.state = Lifecycle.done
-                await app.bot.send_message(
-                    chat_id,
-                    f"✅ bot #{cfg.bot_id}: достаточно проверок ({already_booked}/{cfg.required_reviews}). остановился.",
-                    reply_markup=MAIN_MENU_KB,
-                )
-                await manager.on_finished(inst, app)
-                return
+            if missing > 0:
+                picked = pick_candidate_start(slots)
+                if picked:
+                    start_time, staff_slot = picked
 
-            picked = pick_candidate_start(slots)
-            if picked:
-                start_time, staff_slot = picked
+                    if cfg.dry_run:
+                        inst.state = Lifecycle.done
+                        inst.stats.attempts_success += 1
+                        await app.bot.send_message(
+                            chat_id,
+                            f"🔔 bot #{cfg.bot_id} (dry-run): найден слот\n"
+                            f"проект: {cfg.project_name}\nstart: {start_time}\n"
+                            f"нужно ещё: {missing}/{cfg.required_reviews}",
+                            reply_markup=MAIN_MENU_KB,
+                        )
+                        await manager.on_finished(inst, app)
+                        return
 
-                if cfg.dry_run:
-                    inst.state = Lifecycle.done
+                    # booking mode: book one slot and continue until enough
+                    booking_id = client.book(answer_id=answer_id, start_time_iso_z=start_time, staff_slot=staff_slot)
                     inst.stats.attempts_success += 1
                     await app.bot.send_message(
                         chat_id,
-                        f"🔔 bot #{cfg.bot_id} (dry-run): найден слот\n"
-                        f"проект: {cfg.project_name}\nstart: {start_time}\n"
-                        f"нужно ещё: {missing}/{cfg.required_reviews}",
+                        f"✅ bot #{cfg.bot_id}: записался\n"
+                        f"проект: {cfg.project_name}\nstart: {start_time}\nbooking: {booking_id}\n"
+                        f"было: {already_booked}/{cfg.required_reviews} (дособираю до {cfg.required_reviews})",
                         reply_markup=MAIN_MENU_KB,
                     )
-                    await manager.on_finished(inst, app)
-                    return
-
-                # booking mode: book one slot and continue until enough
-                booking_id = client.book(answer_id=answer_id, start_time_iso_z=start_time, staff_slot=staff_slot)
-                inst.stats.attempts_success += 1
-                await app.bot.send_message(
-                    chat_id,
-                    f"✅ bot #{cfg.bot_id}: записался\n"
-                    f"проект: {cfg.project_name}\nstart: {start_time}\nbooking: {booking_id}\n"
-                    f"было: {already_booked}/{cfg.required_reviews} (дособираю до {cfg.required_reviews})",
-                    reply_markup=MAIN_MENU_KB,
-                )
 
         except asyncio.CancelledError:
             inst.state = Lifecycle.stopped
