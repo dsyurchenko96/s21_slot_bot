@@ -1,25 +1,17 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 from __future__ import annotations
 
-import argparse
 import html
 import logging
-import os
-import random
 import re
-import sys
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple, List
 from urllib.parse import urljoin, urlparse, parse_qs
 
 import requests
 
-from queries import Q_GET_MODULE, Q_GET_SLOTS, Q_BOOK
+from queries import Q_GET_MODULE, Q_GET_SLOTS, Q_BOOK, Q_GET_CUR_PROJECTS, Q_GET_USER
 
 AUTH_BASE = "https://auth.21-school.ru"
 REALM = "EduPowerKeycloak"
@@ -28,75 +20,55 @@ REDIRECT_URI = "https://platform.21-school.ru/"
 
 GRAPHQL_URL = "https://platform.21-school.ru/services/graphql"
 
+logger = logging.getLogger(__name__)
+
 
 class School21Error(RuntimeError):
     pass
 
 
-logger = logging.getLogger(__name__)
-
-
 def _extract_login_action(html_text: str, base_url: str) -> str:
-    """
-    Ищем action у формы логина: .../login-actions/authenticate?...session_code=...&execution=...&tab_id=...
-    """
     m = re.search(
         r'action\s*=\s*"([^"]*login-actions/authenticate[^"]*)"',
         html_text,
         flags=re.IGNORECASE,
     )
     if not m:
-        raise School21Error("Не смог найти login form action в HTML Keycloak (возможно изменилась страница логина).")
-    action = html.unescape(m.group(1))
-    return urljoin(base_url, action)
+        raise School21Error("не смог найти login form action в HTML keycloak")
+    return urljoin(base_url, html.unescape(m.group(1)))
 
 
-def _extract_code_from_redirect_history(history: list[requests.Response]) -> str | None:
-    """
-    code приходит в Location с fragment: https://platform.../#state=...&code=...
-    requests при переходе отбрасывает fragment, поэтому берем из Location в history.
-    """
+def _extract_code_from_redirect_history(history: list[requests.Response]) -> Optional[str]:
     for resp in reversed(history):
         loc = resp.headers.get("Location") or resp.headers.get("location")
-        if not loc:
-            continue
-        if "code=" not in loc:
+        if not loc or "code=" not in loc:
             continue
         u = urlparse(loc)
-        frag = u.fragment  # "state=...&code=..."
-        if not frag:
+        if not u.fragment:
             continue
-        qs = parse_qs(frag)
+        qs = parse_qs(u.fragment)
         code = (qs.get("code") or [None])[0]
         if code:
             return code
     return None
 
 
-def _utc_now_iso_z() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
-
 @dataclass
 class Tokens:
     access_token: str
     refresh_token: str
-    expires_at_epoch: float  # epoch seconds
+    expires_at_epoch: float
 
 
 class School21Client:
-    """
-    Клиент: Keycloak login -> access_token -> GraphQL.
-    """
-
     def __init__(
-            self,
-            username: str,
-            password: str,
-            userrole: str = "STUDENT",
-            x_edu_org_unit_id: str = "6bfe3c56-0211-4fe1-9e59-51616caac4dd",
-            x_edu_product_id: str = "96098f4b-5708-4c42-a62c-6893419169b3",
-            timeout_s: int = 25,
+        self,
+        username: str,
+        password: str,
+        userrole: str = "STUDENT",
+        x_edu_org_unit_id: str = "6bfe3c56-0211-4fe1-9e59-51616caac4dd",
+        x_edu_product_id: str = "96098f4b-5708-4c42-a62c-6893419169b3",
+        timeout_s: int = 25,
     ):
         self.username = username
         self.password = password
@@ -123,31 +95,22 @@ class School21Client:
             f"&nonce={nonce}"
         )
 
+    def _set_token_cookie(self, access: str) -> None:
+        self.sess.cookies.set("tokenId", access, domain="platform.21-school.ru", path="/")
+        self.sess.cookies.set("tokenId", access, domain=".21-school.ru", path="/")
+
     def login(self) -> None:
-        """
-        1) GET /auth (Keycloak login page) -> достать form action
-        2) POST creds -> редиректы -> вытащить authorization code из Location fragment
-        3) POST /token (authorization_code) -> access_token/refresh_token
-        """
         state = str(uuid.uuid4())
         nonce = str(uuid.uuid4())
-        auth_url = self._auth_endpoint(state=state, nonce=nonce)
-
-        r = self.sess.get(auth_url, timeout=self.timeout_s)
+        r = self.sess.get(self._auth_endpoint(state, nonce), timeout=self.timeout_s)
         r.raise_for_status()
 
         action_url = _extract_login_action(r.text, AUTH_BASE)
+        r2 = self.sess.post(action_url, data={"username": self.username, "password": self.password}, allow_redirects=True, timeout=self.timeout_s)
 
-        data = {"username": self.username, "password": self.password}
-        r2 = self.sess.post(action_url, data=data, allow_redirects=True, timeout=self.timeout_s)
-
-        # code лежит в редиректе на platform (в Location с fragment)
         code = _extract_code_from_redirect_history(r2.history + [r2])
         if not code:
-            raise School21Error(
-                "Не смог извлечь authorization code из редиректов. "
-                "Проверь, что логин/пароль верные, и что нет дополнительных шагов (2FA/капча)."
-            )
+            raise School21Error("не смог извлечь code из редиректов (логин/пароль/2fa?)")
 
         token_resp = self.sess.post(
             self._token_endpoint(),
@@ -164,12 +127,10 @@ class School21Client:
         payload = token_resp.json()
 
         access = payload["access_token"]
-        self.sess.cookies.set("tokenId", access, domain="platform.21-school.ru", path="/")
         refresh = payload.get("refresh_token", "")
         expires_in = float(payload.get("expires_in", 300))
-        expires_at = time.time() + expires_in - 20  # небольшой запас
-
-        self.tokens = Tokens(access_token=access, refresh_token=refresh, expires_at_epoch=expires_at)
+        self.tokens = Tokens(access_token=access, refresh_token=refresh, expires_at_epoch=time.time() + expires_in - 20)
+        self._set_token_cookie(access)
 
     def _refresh_if_needed(self) -> None:
         if not self.tokens:
@@ -178,7 +139,6 @@ class School21Client:
         if time.time() < self.tokens.expires_at_epoch:
             return
         if not self.tokens.refresh_token:
-            # если refresh_token не пришел — просто перелогинимся
             self.login()
             return
 
@@ -193,7 +153,6 @@ class School21Client:
             timeout=self.timeout_s,
         )
         if resp.status_code >= 400:
-            # fallback: полный логин
             self.login()
             return
 
@@ -202,6 +161,7 @@ class School21Client:
         refresh = payload.get("refresh_token", self.tokens.refresh_token)
         expires_in = float(payload.get("expires_in", 300))
         self.tokens = Tokens(access_token=access, refresh_token=refresh, expires_at_epoch=time.time() + expires_in - 20)
+        self._set_token_cookie(access)
 
     def graphql(self, operation_name: str, query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
         self._refresh_if_needed()
@@ -220,16 +180,11 @@ class School21Client:
 
         resp = self.sess.post(
             GRAPHQL_URL,
-            json={
-                "operationName": operation_name,
-                "variables": variables,
-                "query": query,
-            },
+            json={"operationName": operation_name, "variables": variables, "query": query},
             headers=headers,
             timeout=self.timeout_s,
         )
 
-        # если токен внезапно протух — один раз перелогинимся и повторим
         if resp.status_code in (401, 403):
             self.login()
             resp = self.sess.post(
@@ -242,37 +197,58 @@ class School21Client:
         resp.raise_for_status()
         data = resp.json()
 
-        if "errors" in data and data["errors"]:
-            # GraphQL ошибки часто информативны
-            raise School21Error(f"GraphQL errors: {data['errors']}")
+        if data.get("errors"):
+            raise School21Error(f"graphql errors: {data['errors']}")
 
         return data.get("data", {})
 
+    def get_user_id(self) -> str:
+        data = self.graphql("getCurrentUser", Q_GET_USER, {})
+        try:
+            return str(data["user"]["getCurrentUser"]["id"])
+        except Exception as e:
+            raise School21Error(f"bad getCurrentUser response: {e}, data={data}")
+
     def get_project_name(self, module_id: str) -> str:
-        logger.info("Getting project name for module_id '%s'", module_id)
+        assert self.tokens is not None
         resp = self.sess.get(
             f"https://platform.21-school.ru/services/21-school/api/v1/participants/{self.username}/projects/{module_id}",
             headers={"Authorization": f"Bearer {self.tokens.access_token}"},
             timeout=self.timeout_s,
         )
         resp.raise_for_status()
-        data = resp.json()
-        logger.info("Received response for project_name: %s", data)
-        return data["title"]
+        return resp.json()["title"]
+
+    def get_reviewed_projects(self, user_id: str) -> list[tuple[str, str]]:
+        data = self.graphql("getStudentCurrentProjects", Q_GET_CUR_PROJECTS, {"userId": str(user_id)})
+        try:
+            val = data["student"]["getStudentCurrentProjects"]
+        except Exception as e:
+            raise School21Error(f"bad getStudentCurrentProjects: {e}, data={data}")
+
+        items: list[dict] = []
+        if isinstance(val, list):
+            items = val
+        elif isinstance(val, dict) and "goals" in val and isinstance(val["goals"], list):
+            items = val["goals"]
+        elif isinstance(val, dict) and "items" in val and isinstance(val["items"], list):
+            items = val["items"]
+        elif isinstance(val, dict) and val:
+            items = [val]
+
+        out: list[tuple[str, str]] = []
+        for p in items:
+            if p.get("goalStatus") == "P2P_EVALUATIONS" and p.get("goalId"):
+                out.append((str(p["goalId"]), str(p.get("name") or p.get("title") or "")))
+        return out
 
     def get_task_and_answer(self, module_id: str) -> Tuple[str, str]:
-        data = self.graphql(
-            "calendarGetModule",
-            Q_GET_MODULE,
-            {"moduleId": str(module_id)},
-        )
+        data = self.graphql("calendarGetModule", Q_GET_MODULE, {"moduleId": str(module_id)})
         try:
             cur = data["student"]["getModuleById"]["currentTask"]
-            task_id = cur["taskId"]
-            answer_id = cur["lastAnswer"]["id"]
-            return str(task_id), str(answer_id)
+            return str(cur["taskId"]), str(cur["lastAnswer"]["id"])
         except Exception as e:
-            raise School21Error(f"Не смог распарсить taskId/answerId из calendarGetModule: {e}")
+            raise School21Error(f"не смог распарсить task/answer: {e}")
 
     def get_timeslots(self, task_id: str, from_iso_z: str, to_iso_z: str) -> tuple[list[dict[str, Any]], int]:
         data = self.graphql(
@@ -282,46 +258,25 @@ class School21Client:
         )
         try:
             review_data = data["student"]["getNameLessStudentTimeslotsForReview"]
-            timeslots: list[dict[str, Any]] = review_data["timeSlots"]
-            num_booked_reviews: int = review_data["projectReviewsInfo"]["relevantReviewByStudentsCount"]
-            return timeslots, num_booked_reviews
+            timeslots = review_data.get("timeSlots") or []
+            booked = int(review_data["projectReviewsInfo"]["relevantReviewByStudentsCount"])
+            return timeslots, booked
         except Exception as e:
-            raise School21Error(f"Не смог распарсить timeSlots: {e}")
+            raise School21Error(f"не смог распарсить timeslots: {e}")
 
     def book(self, answer_id: str, start_time_iso_z: str, staff_slot: bool, is_online: bool = True) -> str:
         data = self.graphql(
             "calendarAddBookingToEventSlot",
             Q_BOOK,
-            {
-                "answerId": str(answer_id),
-                "startTime": start_time_iso_z,
-                "wasStaffSlotChosen": bool(staff_slot),
-                "isOnline": bool(is_online),
-            },
+            {"answerId": str(answer_id), "startTime": start_time_iso_z, "wasStaffSlotChosen": bool(staff_slot), "isOnline": bool(is_online)},
         )
         try:
             return str(data["student"]["addBookingP2PToEventSlot"]["id"])
         except Exception as e:
-            raise School21Error(f"Не смог распарсить booking id: {e}")
-
-
-class TelegramNotifier:
-    def __init__(self, bot_token: str, chat_id: str, timeout_s: int = 15):
-        self.bot_token = bot_token
-        self.chat_id = chat_id
-        self.timeout_s = timeout_s
-
-    def send(self, text: str) -> None:
-        url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
-        r = requests.post(url, json={"chat_id": self.chat_id, "text": text}, timeout=self.timeout_s)
-        r.raise_for_status()
+            raise School21Error(f"не смог распарсить booking id: {e}")
 
 
 def pick_candidate_start(timeslots: List[Dict[str, Any]]) -> Optional[Tuple[str, bool]]:
-    """
-    Выбираем “лучший” старт: самый ранний validStartTimes.
-    Возвращаем (start_time_iso_z, staff_slot).
-    """
     candidates: List[Tuple[str, bool]] = []
     for slot in timeslots:
         staff = bool(slot.get("staffSlot", False))
@@ -331,78 +286,3 @@ def pick_candidate_start(timeslots: List[Dict[str, Any]]) -> Optional[Tuple[str,
         return None
     candidates.sort(key=lambda x: x[0])
     return candidates[0]
-
-
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--module-id", required=True, help="ID проекта/модуля (moduleId), который проверяется")
-    ap.add_argument("--from", dest="from_iso", required=True, help="UTC ISO, например 2025-12-14T21:00:00.000Z")
-    ap.add_argument("--to", dest="to_iso", required=True, help="UTC ISO, например 2025-12-21T20:59:59.999Z")
-    ap.add_argument("--interval", type=int, default=60, help="интервал опроса (сек)")
-    ap.add_argument("--jitter", type=int, default=7, help="рандомный джиттер (сек) чтобы не долбить ровно по минуте")
-    ap.add_argument("--telegram", action="store_true", help="включить уведомление в Telegram")
-    ap.add_argument("--dry-run", action="store_true", help="не бронировать, только печатать найденный слот")
-
-    args = ap.parse_args()
-
-    username = os.environ.get("S21_USERNAME", "").strip()
-    password = os.environ.get("S21_PASSWORD", "").strip()
-    if not username or not password:
-        print("Нужно задать переменные окружения S21_USERNAME и S21_PASSWORD", file=sys.stderr)
-        return 2
-
-    client = School21Client(username=username, password=password)
-    client.login()
-
-    tg = None
-    if args.telegram:
-        bot_token = os.environ.get("TG_BOT_TOKEN", "").strip()
-        chat_id = os.environ.get("TG_CHAT_ID", "").strip()
-        if not bot_token or not chat_id:
-            print("Для Telegram нужны TG_BOT_TOKEN и TG_CHAT_ID", file=sys.stderr)
-            return 2
-        tg = TelegramNotifier(bot_token, chat_id)
-        project_name = client.get_project_name(args.module_id)
-        tg.send(f"Starting to look for slots for {project_name} from {args.from_iso} to {args.to_iso}...")
-
-    task_id, answer_id = client.get_task_and_answer(args.module_id)
-
-    print(f"[ok] taskId={task_id}, answerId={answer_id}")
-
-    attempt = 0
-    while True:
-        attempt += 1
-        try:
-            slots, _ = client.get_timeslots(task_id, args.from_iso, args.to_iso)
-            picked = pick_candidate_start(slots)
-            if not picked:
-                print(f"[{attempt}] нет слотов ({_utc_now_iso_z()})")
-            else:
-                start_time, staff_slot = picked
-                print(f"[{attempt}] найден слот: {start_time} (staffSlot={staff_slot})")
-
-                if args.dry_run:
-                    msg = f"DRY RUN: найден слот {start_time} (moduleId={args.module_id})"
-                    if tg:
-                        tg.send(msg)
-                    return 0
-
-                booking_id = client.book(answer_id=answer_id, start_time_iso_z=start_time, staff_slot=staff_slot)
-                msg = f"✅ Успешно записался на ревью!\nmoduleId={args.module_id}\nstart={start_time}\nbookingId={booking_id}"
-                print(msg)
-                if tg:
-                    tg.send(msg)
-                return 0
-
-        except School21Error as e:
-            # типичный кейс: слот уже забрали, GraphQL вернул ошибку — продолжаем
-            print(f"[{attempt}] ошибка: {e}", file=sys.stderr)
-        except requests.RequestException as e:
-            print(f"[{attempt}] network error: {e}", file=sys.stderr)
-
-        sleep_s = args.interval + random.randint(0, max(0, args.jitter))
-        time.sleep(sleep_s)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
