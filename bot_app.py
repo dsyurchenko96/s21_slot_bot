@@ -23,7 +23,6 @@ from telegram.ext import (
 
 from v1.slot_bot import School21Client, School21Error, pick_candidate_start
 
-
 MAIN_MENU_KB = ReplyKeyboardMarkup(
     [
         ["▶️ Начать", "⛔ Остановить"],
@@ -80,6 +79,7 @@ class Stats:
     attempts_total: int = 0
     attempts_success: int = 0
     attempts_failed: int = 0
+    currently_booked: int = 0
 
 
 @dataclass
@@ -117,9 +117,11 @@ class BotManager:
 
     def list_all(self, chat_id: int) -> List[BotInstance]:
         arr = [b for b in self.bots.values() if b.cfg.chat_id == chat_id]
+
         def key(x: BotInstance) -> Tuple[int, str]:
             pr = {Lifecycle.running: 0, Lifecycle.queued: 1, Lifecycle.done: 2, Lifecycle.stopped: 3}.get(x.state, 9)
             return (pr, x.cfg.bot_id)
+
         return sorted(arr, key=key)
 
     def running(self, chat_id: int) -> List[BotInstance]:
@@ -132,7 +134,8 @@ class BotManager:
         return len(self.running(chat_id))
 
     def active_count(self, chat_id: int) -> int:
-        return len([b for b in self.bots.values() if b.cfg.chat_id == chat_id and b.state in (Lifecycle.running, Lifecycle.queued)])
+        return len([b for b in self.bots.values() if
+                    b.cfg.chat_id == chat_id and b.state in (Lifecycle.running, Lifecycle.queued)])
 
     def add_bot(self, inst: BotInstance) -> None:
         self.bots[inst.cfg.bot_id] = inst
@@ -217,7 +220,8 @@ def _parse_dt_to_utc_z(text: str) -> str:
 
     off = os.getenv("BOT_TZ_OFFSET", "+03:00")
     sign = 1 if off[0] == "+" else -1
-    hh = int(off[1:3]); mm = int(off[4:6])
+    hh = int(off[1:3])
+    mm = int(off[4:6])
     delta = sign * (hh * 60 + mm)
 
     utc_ts = dt_local.timestamp() - delta * 60
@@ -233,7 +237,7 @@ def _bot_line(inst: BotInstance) -> str:
         f"({c.required_reviews} reviews, {'dry' if c.dry_run else 'book'})\n"
         f"utc: {c.from_iso_z} → {c.to_iso_z}\n"
         f"last ping: {lp}, attempts: {inst.stats.attempts_total} "
-        f"(ok {inst.stats.attempts_success}/fail {inst.stats.attempts_failed})"
+        f"(ok {inst.stats.attempts_success} / fail {inst.stats.attempts_failed} / booked {inst.stats.currently_booked})"
     )
 
 
@@ -250,7 +254,8 @@ async def run_bot_loop(inst: BotInstance, app: Application, manager: BotManager)
         task_id, answer_id = client.get_task_and_answer(cfg.project_id)
     except Exception as e:
         inst.state = Lifecycle.stopped
-        await app.bot.send_message(chat_id, f"❌ bot #{cfg.bot_id}: не смог получить task/answer: {e}", reply_markup=MAIN_MENU_KB)
+        await app.bot.send_message(chat_id, f"❌ bot #{cfg.bot_id}: не смог получить task/answer: {e}",
+                                   reply_markup=MAIN_MENU_KB)
         await manager.on_finished(inst, app)
         return
 
@@ -260,7 +265,8 @@ async def run_bot_loop(inst: BotInstance, app: Application, manager: BotManager)
 
         if datetime.now(UTC) >= _isoz_to_dt(cfg.to_iso_z):
             inst.state = Lifecycle.stopped
-            await app.bot.send_message(chat_id, f"⌛️ bot #{cfg.bot_id}: окно поиска истекло.", reply_markup=MAIN_MENU_KB)
+            await app.bot.send_message(chat_id, f"⌛️ bot #{cfg.bot_id}: окно поиска истекло.",
+                                       reply_markup=MAIN_MENU_KB)
             await manager.on_finished(inst, app)
             return
 
@@ -269,6 +275,7 @@ async def run_bot_loop(inst: BotInstance, app: Application, manager: BotManager)
 
         try:
             slots, already_booked = client.get_timeslots(task_id, cfg.from_iso_z, cfg.to_iso_z)
+            inst.stats.currently_booked = already_booked
             missing = cfg.required_reviews - int(already_booked)
 
             if missing > 0:
@@ -291,12 +298,14 @@ async def run_bot_loop(inst: BotInstance, app: Application, manager: BotManager)
 
                     # booking mode: book one slot and continue until enough
                     booking_id = client.book(answer_id=answer_id, start_time_iso_z=start_time, staff_slot=staff_slot)
+                    currently_booked = already_booked + 1
+                    inst.stats.currently_booked = currently_booked
                     inst.stats.attempts_success += 1
                     await app.bot.send_message(
                         chat_id,
                         f"✅ bot #{cfg.bot_id}: записался\n"
                         f"проект: {cfg.project_name}\nstart: {start_time}\nbooking: {booking_id}\n"
-                        f"было: {already_booked}/{cfg.required_reviews} (дособираю до {cfg.required_reviews})",
+                        f"записано: {currently_booked}/{cfg.required_reviews}",
                         reply_markup=MAIN_MENU_KB,
                     )
 
@@ -342,17 +351,23 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # wizard custom input
     if scr == Screen.start_wait_from:
-        await start_custom_from(update, context); return
+        await start_custom_from(update, context)
+        return
     if scr == Screen.start_wait_to:
-        await start_custom_to(update, context); return
+        await start_custom_to(update, context)
+        return
     if scr == Screen.edit_wait_from:
-        await edit_custom_from(update, context); return
+        await edit_custom_from(update, context)
+        return
     if scr == Screen.edit_wait_to:
-        await edit_custom_to(update, context); return
+        await edit_custom_to(update, context)
+        return
     if scr == Screen.edit_wait_interval:
-        await edit_custom_interval(update, context); return
+        await edit_custom_interval(update, context)
+        return
     if scr == Screen.settings_wait_interval:
-        await settings_custom_interval(update, context); return
+        await settings_custom_interval(update, context)
+        return
 
     await update.message.reply_text("выбери действие в меню 🙂", reply_markup=MAIN_MENU_KB)
 
@@ -374,24 +389,29 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         pid = data.split(":", 2)[2]
         context.chat_data["start_project_id"] = pid
         context.chat_data["start_project_name"] = context.chat_data.get("projects_map", {}).get(pid, pid)
-        await start_pick_num(q, context); return
+        await start_pick_num(q, context)
+        return
 
     if data.startswith("start:num:"):
         n = int(data.split(":")[2])
         context.chat_data["start_required_reviews"] = n
-        await start_pick_from(q, context); return
+        await start_pick_from(q, context)
+        return
 
     if data.startswith("start:from:"):
         kind = data.split(":")[2]
         if kind == "now":
             context.chat_data["start_from"] = _isoz_now()
-            await start_pick_to(q, context); return
+            await start_pick_to(q, context)
+            return
         if kind == "p30":
             context.chat_data["start_from"] = _isoz_plus(minutes=30)
-            await start_pick_to(q, context); return
+            await start_pick_to(q, context)
+            return
         if kind == "p60":
             context.chat_data["start_from"] = _isoz_plus(hours=1)
-            await start_pick_to(q, context); return
+            await start_pick_to(q, context)
+            return
         if kind == "custom":
             _screen_set(context, Screen.start_wait_from)
             await q.message.reply_text("введи start (ISO Z или YYYY-MM-DD HH:MM)", reply_markup=MAIN_MENU_KB)
@@ -401,10 +421,12 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         kind = data.split(":")[2]
         if kind == "p120":
             context.chat_data["start_to"] = _isoz_plus(hours=2)
-            await start_pick_mode(q, context); return
+            await start_pick_mode(q, context)
+            return
         if kind == "p240":
             context.chat_data["start_to"] = _isoz_plus(hours=4)
-            await start_pick_mode(q, context); return
+            await start_pick_mode(q, context)
+            return
         if kind == "custom":
             _screen_set(context, Screen.start_wait_to)
             await q.message.reply_text("введи end (тот же формат)", reply_markup=MAIN_MENU_KB)
@@ -413,11 +435,13 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if data.startswith("start:mode:"):
         mode = data.split(":")[2]
         context.chat_data["start_dry_run"] = (mode == "dry")
-        await start_confirm(q, context); return
+        await start_confirm(q, context)
+        return
 
     if data.startswith("start:confirm:"):
         action = data.split(":")[2]
-        await start_finalize(q, context, action); return
+        await start_finalize(q, context, action)
+        return
 
     # stop
     if data == "stop:all":
@@ -426,7 +450,8 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     if data == "stop:one":
-        await stop_pick_one(q, context); return
+        await stop_pick_one(q, context)
+        return
 
     if data.startswith("stop:bot:"):
         bot_id = data.split(":")[2]
@@ -435,15 +460,19 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     if data == "stop:multi":
-        await stop_multi(q, context); return
+        await stop_multi(q, context)
+        return
 
     if data.startswith("stop:toggle:"):
         bot_id = data.split(":")[2]
         sel: Set[str] = context.chat_data.get("stop_selected", set())
-        if bot_id in sel: sel.remove(bot_id)
-        else: sel.add(bot_id)
+        if bot_id in sel:
+            sel.remove(bot_id)
+        else:
+            sel.add(bot_id)
         context.chat_data["stop_selected"] = sel
-        await stop_multi(q, context); return
+        await stop_multi(q, context)
+        return
 
     if data == "stop:selected":
         sel: Set[str] = context.chat_data.get("stop_selected", set())
@@ -457,42 +486,52 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if data.startswith("edit:bot:"):
         bot_id = data.split(":")[2]
         context.chat_data["edit_bot_id"] = bot_id
-        await edit_menu(q, context); return
+        await edit_menu(q, context)
+        return
 
     if data == "edit:set_from":
         _screen_set(context, Screen.edit_wait_from)
-        await q.message.reply_text("введи новый start", reply_markup=MAIN_MENU_KB); return
+        await q.message.reply_text("введи новый start", reply_markup=MAIN_MENU_KB)
+        return
 
     if data == "edit:set_to":
         _screen_set(context, Screen.edit_wait_to)
-        await q.message.reply_text("введи новый end", reply_markup=MAIN_MENU_KB); return
+        await q.message.reply_text("введи новый end", reply_markup=MAIN_MENU_KB)
+        return
 
     if data == "edit:set_interval":
         _screen_set(context, Screen.edit_wait_interval)
-        await q.message.reply_text("введи новый интервал (сек)", reply_markup=MAIN_MENU_KB); return
+        await q.message.reply_text("введи новый интервал (сек)", reply_markup=MAIN_MENU_KB)
+        return
 
     if data == "edit:toggle_dry":
         bot_id = context.chat_data.get("edit_bot_id")
         inst = MANAGER.bots.get(bot_id) if bot_id else None
         if inst:
             inst.cfg.dry_run = not inst.cfg.dry_run
-        await edit_menu(q, context); return
+        await edit_menu(q, context)
+        return
 
     if data == "edit:restart":
-        await edit_restart(q, context); return
+        await edit_restart(q, context)
+        return
 
     # status
     if data == "status:refresh":
-        await status_show(q, context); return
+        await status_show(q, context)
+        return
 
     # settings
     if data == "settings:max":
-        await settings_pick_max(q, context); return
+        await settings_pick_max(q, context)
+        return
     if data.startswith("settings:setmax:"):
-        await settings_apply_max(q, context, int(data.split(":")[2])); return
+        await settings_apply_max(q, context, int(data.split(":")[2]))
+        return
     if data == "settings:interval":
         _screen_set(context, Screen.settings_wait_interval)
-        await q.message.reply_text("введи новый глобальный интервал (сек)", reply_markup=MAIN_MENU_KB); return
+        await q.message.reply_text("введи новый глобальный интервал (сек)", reply_markup=MAIN_MENU_KB)
+        return
 
     await q.message.reply_text("не понял кнопку — вернись в меню", reply_markup=MAIN_MENU_KB)
 
@@ -576,7 +615,8 @@ async def start_custom_from(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def start_pick_to(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
     _screen_set(context, Screen.start_pick_to)
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("+2ч", callback_data="start:to:p120"), InlineKeyboardButton("+4ч", callback_data="start:to:p240")],
+        [InlineKeyboardButton("+2ч", callback_data="start:to:p120"),
+         InlineKeyboardButton("+4ч", callback_data="start:to:p240")],
         [InlineKeyboardButton("ввести вручную", callback_data="start:to:custom")],
         [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
     ])
@@ -666,7 +706,8 @@ async def start_finalize(q, context: ContextTypes.DEFAULT_TYPE, action: str) -> 
         await q.message.reply_text(f"✅ добавил bot #{bot_id} и запускаю", reply_markup=MAIN_MENU_KB)
         await MANAGER.try_start_next(chat_id, context.application)
     elif action == "start":
-        await q.message.reply_text(f"✅ добавил bot #{bot_id}, лимит достигнут — поставил в очередь", reply_markup=MAIN_MENU_KB)
+        await q.message.reply_text(f"✅ добавил bot #{bot_id}, лимит достигнут — поставил в очередь",
+                                   reply_markup=MAIN_MENU_KB)
     else:
         await q.message.reply_text(f"➕ добавил bot #{bot_id} в очередь", reply_markup=MAIN_MENU_KB)
 
@@ -692,7 +733,8 @@ async def stop_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def stop_pick_one(q, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = q.message.chat_id
     bots = [b for b in MANAGER.list_all(chat_id) if b.state in (Lifecycle.running, Lifecycle.queued)]
-    kb = [[InlineKeyboardButton(f"🛑 #{b.cfg.bot_id} — {b.cfg.project_name}", callback_data=f"stop:bot:{b.cfg.bot_id}")] for b in bots[:20]]
+    kb = [[InlineKeyboardButton(f"🛑 #{b.cfg.bot_id} — {b.cfg.project_name}", callback_data=f"stop:bot:{b.cfg.bot_id}")]
+          for b in bots[:20]]
     kb.append([InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")])
     await q.message.reply_text("выбери бота:", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -706,7 +748,8 @@ async def stop_multi(q, context: ContextTypes.DEFAULT_TYPE) -> None:
     kb = []
     for b in bots[:20]:
         mark = "☑️" if b.cfg.bot_id in sel else "⬜️"
-        kb.append([InlineKeyboardButton(f"{mark} #{b.cfg.bot_id} — {b.cfg.project_name}", callback_data=f"stop:toggle:{b.cfg.bot_id}")])
+        kb.append([InlineKeyboardButton(f"{mark} #{b.cfg.bot_id} — {b.cfg.project_name}",
+                                        callback_data=f"stop:toggle:{b.cfg.bot_id}")])
     kb.append([InlineKeyboardButton("🛑 остановить выбранные", callback_data="stop:selected")])
     kb.append([InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")])
     await q.message.reply_text("выбери несколько:", reply_markup=InlineKeyboardMarkup(kb))
@@ -720,7 +763,8 @@ async def edit_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not bots:
         await update.message.reply_text("нет активных ботов для изменения", reply_markup=MAIN_MENU_KB)
         return
-    kb = [[InlineKeyboardButton(f"✏️ #{b.cfg.bot_id} — {b.cfg.project_name}", callback_data=f"edit:bot:{b.cfg.bot_id}")] for b in bots[:20]]
+    kb = [[InlineKeyboardButton(f"✏️ #{b.cfg.bot_id} — {b.cfg.project_name}", callback_data=f"edit:bot:{b.cfg.bot_id}")]
+          for b in bots[:20]]
     kb.append([InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")])
     await update.message.reply_text("выбери бота:", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -740,8 +784,10 @@ async def edit_menu(q, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"state: {inst.state}"
     )
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("изменить start", callback_data="edit:set_from"), InlineKeyboardButton("изменить end", callback_data="edit:set_to")],
-        [InlineKeyboardButton("интервал", callback_data="edit:set_interval"), InlineKeyboardButton("toggle dry", callback_data="edit:toggle_dry")],
+        [InlineKeyboardButton("изменить start", callback_data="edit:set_from"),
+         InlineKeyboardButton("изменить end", callback_data="edit:set_to")],
+        [InlineKeyboardButton("интервал", callback_data="edit:set_interval"),
+         InlineKeyboardButton("toggle dry", callback_data="edit:toggle_dry")],
         [InlineKeyboardButton("перезапустить", callback_data="edit:restart")],
         [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
     ])
@@ -804,7 +850,8 @@ async def edit_restart(q, context: ContextTypes.DEFAULT_TYPE) -> None:
     bot_id = context.chat_data.get("edit_bot_id")
     inst = MANAGER.bots.get(bot_id) if bot_id else None
     if not inst:
-        await q.message.reply_text("не нашёл бота", reply_markup=MAIN_MENU_KB); return
+        await q.message.reply_text("не нашёл бота", reply_markup=MAIN_MENU_KB)
+        return
     if inst.state == Lifecycle.running:
         MANAGER.stop_bot(bot_id)
         inst.state = Lifecycle.queued
@@ -820,13 +867,17 @@ async def status_show(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = msg_or_q.message.chat_id if hasattr(msg_or_q, "message") else msg_or_q.message.chat_id
     running = MANAGER.running_count(chat_id)
     queued = len(MANAGER.queues.get(chat_id, []))
-    lines = [f"📌 статус\nrunning: {running}\nqueued: {queued}\nmax: {MANAGER.settings.max_bots}\ninterval: {MANAGER.settings.interval_sec}s\n"]
+    lines = [
+        f"📌 статус\nrunning: {running}\nqueued: {queued}\n"
+        f"max: {MANAGER.settings.max_bots}\ninterval: {MANAGER.settings.interval_sec}s\n"
+    ]
     bots = MANAGER.list_all(chat_id)
     if not bots:
         lines.append("ботов нет")
     else:
         for b in bots:
-            lines.append(_bot_line(b)); lines.append("")
+            lines.append(_bot_line(b))
+            lines.append("")
     text = "\n".join(lines).strip()
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 обновить", callback_data="status:refresh")],
