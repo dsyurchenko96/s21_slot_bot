@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import logging
 import os
 import random
 import re
@@ -27,8 +28,12 @@ REDIRECT_URI = "https://platform.21-school.ru/"
 
 GRAPHQL_URL = "https://platform.21-school.ru/services/graphql"
 
+
 class School21Error(RuntimeError):
     pass
+
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_login_action(html_text: str, base_url: str) -> str:
@@ -85,13 +90,13 @@ class School21Client:
     """
 
     def __init__(
-        self,
-        username: str,
-        password: str,
-        userrole: str = "STUDENT",
-        x_edu_org_unit_id: str = "6bfe3c56-0211-4fe1-9e59-51616caac4dd",
-        x_edu_product_id: str = "96098f4b-5708-4c42-a62c-6893419169b3",
-        timeout_s: int = 25,
+            self,
+            username: str,
+            password: str,
+            userrole: str = "STUDENT",
+            x_edu_org_unit_id: str = "6bfe3c56-0211-4fe1-9e59-51616caac4dd",
+            x_edu_product_id: str = "96098f4b-5708-4c42-a62c-6893419169b3",
+            timeout_s: int = 25,
     ):
         self.username = username
         self.password = password
@@ -205,7 +210,6 @@ class School21Client:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
-            # "Authorization": f"Bearer {self.tokens.access_token}",
             "userrole": self.userrole,
             "schoolid": self.x_edu_org_unit_id,
             "x-edu-org-unit-id": self.x_edu_org_unit_id,
@@ -228,7 +232,6 @@ class School21Client:
         # если токен внезапно протух — один раз перелогинимся и повторим
         if resp.status_code in (401, 403):
             self.login()
-            # headers["Authorization"] = f"Bearer {self.tokens.access_token}"
             resp = self.sess.post(
                 GRAPHQL_URL,
                 json={"operationName": operation_name, "variables": variables, "query": query},
@@ -246,6 +249,7 @@ class School21Client:
         return data.get("data", {})
 
     def get_project_name(self, module_id: str) -> str:
+        logger.info("Getting project name for module_id '%s'", module_id)
         resp = self.sess.get(
             f"https://platform.21-school.ru/services/21-school/api/v1/participants/{self.username}/projects/{module_id}",
             headers={"Authorization": f"Bearer {self.tokens.access_token}"},
@@ -253,6 +257,7 @@ class School21Client:
         )
         resp.raise_for_status()
         data = resp.json()
+        logger.info("Received response for project_name: %s", data)
         return data["title"]
 
     def get_task_and_answer(self, module_id: str) -> Tuple[str, str]:

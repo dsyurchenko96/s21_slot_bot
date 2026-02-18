@@ -176,6 +176,7 @@ async def handle_project_id(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     try:
         project_name = client.get_project_name(module_id)
     except Exception as e:
+        log.exception("Unable to get project name for module_id '%s'", module_id)
         await update.message.reply_text(f"❌ Не смог найти проект по ID {module_id}.\nОшибка: {e}\nПопробуй другой ID.")
         return State.PROJECT_ID
 
