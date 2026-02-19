@@ -275,8 +275,19 @@ async def run_bot_loop(inst: BotInstance, app: Application, manager: BotManager)
 
         try:
             slots, already_booked = client.get_timeslots(task_id, cfg.from_iso_z, cfg.to_iso_z)
+            currently_booked = inst.stats.currently_booked
             inst.stats.currently_booked = already_booked
             missing = cfg.required_reviews - int(already_booked)
+            # TODO: move currently_booked into a separate Project entity (store in DB?),
+            #  to avoid multiple bots for 1 project sending the same message
+            if already_booked < currently_booked:
+                await app.bot.send_message(
+                    chat_id,
+                    f"⚠️ bot #{cfg.bot_id} отменена проверка\n"
+                    f"проект: {cfg.project_name}\n"
+                    f"нужно ещё: {missing}/{cfg.required_reviews}",
+                    reply_markup=MAIN_MENU_KB,
+                )
 
             if missing > 0:
                 picked = pick_candidate_start(slots)
