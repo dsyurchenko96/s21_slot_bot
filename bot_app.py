@@ -237,7 +237,7 @@ def _bot_line(inst: BotInstance) -> str:
         f"({c.required_reviews} reviews, {'dry' if c.dry_run else 'book'})\n"
         f"utc: {c.from_iso_z} → {c.to_iso_z}\n"
         f"last ping: {lp}, attempts: {inst.stats.attempts_total} "
-        f"(ok {inst.stats.attempts_success} / fail {inst.stats.attempts_failed} / booked {inst.stats.currently_booked})"
+        f"(ok {inst.stats.attempts_success} / fail {inst.stats.attempts_failed} / booked {inst.stats.currently_booked})\n"
     )
 
 
@@ -264,7 +264,7 @@ async def run_bot_loop(inst: BotInstance, app: Application, manager: BotManager)
             return
 
         if datetime.now(UTC) >= _isoz_to_dt(cfg.to_iso_z):
-            inst.state = Lifecycle.stopped
+            inst.state = Lifecycle.done
             await app.bot.send_message(chat_id, f"⌛️ bot #{cfg.bot_id}: окно поиска истекло.",
                                        reply_markup=MAIN_MENU_KB)
             await manager.on_finished(inst, app)
@@ -298,13 +298,14 @@ async def run_bot_loop(inst: BotInstance, app: Application, manager: BotManager)
 
                     # booking mode: book one slot and continue until enough
                     booking_id = client.book(answer_id=answer_id, start_time_iso_z=start_time, staff_slot=staff_slot)
+                    # TODO: add logging for booking_id?
                     currently_booked = already_booked + 1
                     inst.stats.currently_booked = currently_booked
                     inst.stats.attempts_success += 1
                     await app.bot.send_message(
                         chat_id,
                         f"✅ bot #{cfg.bot_id}: записался\n"
-                        f"проект: {cfg.project_name}\nstart: {start_time}\nbooking: {booking_id}\n"
+                        f"проект: {cfg.project_name}\nstart: {start_time}\n"
                         f"записано: {currently_booked}/{cfg.required_reviews}",
                         reply_markup=MAIN_MENU_KB,
                     )
@@ -876,8 +877,8 @@ async def status_show(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
         lines.append("ботов нет")
     else:
         for b in bots:
-            lines.append(_bot_line(b))
-            lines.append("")
+            if b.state != Lifecycle.done:
+                lines.append(_bot_line(b))
     text = "\n".join(lines).strip()
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 обновить", callback_data="status:refresh")],
