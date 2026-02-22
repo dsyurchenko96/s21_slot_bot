@@ -1,8 +1,4 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import asyncio
-import logging
 import os
 import re
 import secrets
@@ -14,14 +10,10 @@ from typing import Dict, List, Optional, Set, Tuple
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 from telegram.ext import (
     Application,
-    CallbackQueryHandler,
-    CommandHandler,
     ContextTypes,
-    MessageHandler,
-    filters,
 )
 
-from v1.slot_bot import School21Client, School21Error, pick_candidate_start
+from src.client.s21_client import School21Client, School21Error, pick_candidate_start
 
 MAIN_MENU_KB = ReplyKeyboardMarkup(
     [
@@ -88,7 +80,7 @@ class BotConfig:
     chat_id: int
     project_id: str
     project_name: str
-    required_reviews: int  # 1..3
+    required_reviews: int
     from_iso_z: str
     to_iso_z: str
     interval_sec: int
@@ -134,8 +126,13 @@ class BotManager:
         return len(self.running(chat_id))
 
     def active_count(self, chat_id: int) -> int:
-        return len([b for b in self.bots.values() if
-                    b.cfg.chat_id == chat_id and b.state in (Lifecycle.running, Lifecycle.queued)])
+        return len(
+            [
+                b
+                for b in self.bots.values()
+                if b.cfg.chat_id == chat_id and b.state in (Lifecycle.running, Lifecycle.queued)
+            ]
+        )
 
     def add_bot(self, inst: BotInstance) -> None:
         self.bots[inst.cfg.bot_id] = inst
@@ -254,8 +251,9 @@ async def run_bot_loop(inst: BotInstance, app: Application, manager: BotManager)
         task_id, answer_id = client.get_task_and_answer(cfg.project_id)
     except Exception as e:
         inst.state = Lifecycle.stopped
-        await app.bot.send_message(chat_id, f"❌ bot #{cfg.bot_id}: не смог получить task/answer: {e}",
-                                   reply_markup=MAIN_MENU_KB)
+        await app.bot.send_message(
+            chat_id, f"❌ bot #{cfg.bot_id}: не смог получить task/answer: {e}", reply_markup=MAIN_MENU_KB
+        )
         await manager.on_finished(inst, app)
         return
 
@@ -265,8 +263,9 @@ async def run_bot_loop(inst: BotInstance, app: Application, manager: BotManager)
 
         if datetime.now(UTC) >= _isoz_to_dt(cfg.to_iso_z):
             inst.state = Lifecycle.done
-            await app.bot.send_message(chat_id, f"⌛️ bot #{cfg.bot_id}: окно поиска истекло.",
-                                       reply_markup=MAIN_MENU_KB)
+            await app.bot.send_message(
+                chat_id, f"⌛️ bot #{cfg.bot_id}: окно поиска истекло.", reply_markup=MAIN_MENU_KB
+            )
             await manager.on_finished(inst, app)
             return
 
@@ -446,7 +445,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if data.startswith("start:mode:"):
         mode = data.split(":")[2]
-        context.chat_data["start_dry_run"] = (mode == "dry")
+        context.chat_data["start_dry_run"] = mode == "dry"
         await start_confirm(q, context)
         return
 
@@ -584,14 +583,16 @@ async def start_begin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def start_pick_num(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
     _screen_set(context, Screen.start_pick_num)
-    kb = InlineKeyboardMarkup([
+    kb = InlineKeyboardMarkup(
         [
-            InlineKeyboardButton("1", callback_data="start:num:1"),
-            InlineKeyboardButton("2", callback_data="start:num:2"),
-            InlineKeyboardButton("3", callback_data="start:num:3"),
-        ],
-        [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
-    ])
+            [
+                InlineKeyboardButton("1", callback_data="start:num:1"),
+                InlineKeyboardButton("2", callback_data="start:num:2"),
+                InlineKeyboardButton("3", callback_data="start:num:3"),
+            ],
+            [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
+        ]
+    )
     if hasattr(msg_or_q, "message"):
         await msg_or_q.message.reply_text("сколько проверок нужно (1–3)?", reply_markup=kb)
     else:
@@ -600,15 +601,17 @@ async def start_pick_num(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def start_pick_from(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
     _screen_set(context, Screen.start_pick_from)
-    kb = InlineKeyboardMarkup([
+    kb = InlineKeyboardMarkup(
         [
-            InlineKeyboardButton("сейчас", callback_data="start:from:now"),
-            InlineKeyboardButton("+30м", callback_data="start:from:p30"),
-            InlineKeyboardButton("+1ч", callback_data="start:from:p60"),
-        ],
-        [InlineKeyboardButton("ввести вручную", callback_data="start:from:custom")],
-        [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
-    ])
+            [
+                InlineKeyboardButton("сейчас", callback_data="start:from:now"),
+                InlineKeyboardButton("+30м", callback_data="start:from:p30"),
+                InlineKeyboardButton("+1ч", callback_data="start:from:p60"),
+            ],
+            [InlineKeyboardButton("ввести вручную", callback_data="start:from:custom")],
+            [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
+        ]
+    )
     if hasattr(msg_or_q, "message"):
         await msg_or_q.message.reply_text("выбери start (по умолчанию сейчас):", reply_markup=kb)
     else:
@@ -626,12 +629,16 @@ async def start_custom_from(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def start_pick_to(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
     _screen_set(context, Screen.start_pick_to)
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("+2ч", callback_data="start:to:p120"),
-         InlineKeyboardButton("+4ч", callback_data="start:to:p240")],
-        [InlineKeyboardButton("ввести вручную", callback_data="start:to:custom")],
-        [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
-    ])
+    kb = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("+2ч", callback_data="start:to:p120"),
+                InlineKeyboardButton("+4ч", callback_data="start:to:p240"),
+            ],
+            [InlineKeyboardButton("ввести вручную", callback_data="start:to:custom")],
+            [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
+        ]
+    )
     if hasattr(msg_or_q, "message"):
         await msg_or_q.message.reply_text("выбери end (по умолчанию +2ч):", reply_markup=kb)
     else:
@@ -649,11 +656,13 @@ async def start_custom_to(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def start_pick_mode(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
     _screen_set(context, Screen.start_pick_mode)
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔎 Искать слоты", callback_data="start:mode:dry")],
-        [InlineKeyboardButton("✅ Записаться", callback_data="start:mode:book")],
-        [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
-    ])
+    kb = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🔎 Искать слоты", callback_data="start:mode:dry")],
+            [InlineKeyboardButton("✅ Записаться", callback_data="start:mode:book")],
+            [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
+        ]
+    )
     if hasattr(msg_or_q, "message"):
         await msg_or_q.message.reply_text("выбери режим:", reply_markup=kb)
     else:
@@ -678,11 +687,13 @@ async def start_confirm(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"режим: {'dry-run' if dry else 'booking'}\n\n"
         f"активных: {MANAGER.active_count(chat_id)} / max {MANAGER.settings.max_bots}"
     )
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚀 старт", callback_data="start:confirm:start")],
-        [InlineKeyboardButton("➕ в очередь", callback_data="start:confirm:queue")],
-        [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
-    ])
+    kb = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🚀 старт", callback_data="start:confirm:start")],
+            [InlineKeyboardButton("➕ в очередь", callback_data="start:confirm:queue")],
+            [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
+        ]
+    )
     if hasattr(msg_or_q, "message"):
         await msg_or_q.message.reply_text(summary, reply_markup=kb)
     else:
@@ -718,8 +729,9 @@ async def start_finalize(q, context: ContextTypes.DEFAULT_TYPE, action: str) -> 
         await q.message.reply_text(f"✅ добавил bot #{bot_id} и запускаю", reply_markup=MAIN_MENU_KB)
         await MANAGER.try_start_next(chat_id, context.application)
     elif action == "start":
-        await q.message.reply_text(f"✅ добавил bot #{bot_id}, лимит достигнут — поставил в очередь",
-                                   reply_markup=MAIN_MENU_KB)
+        await q.message.reply_text(
+            f"✅ добавил bot #{bot_id}, лимит достигнут — поставил в очередь", reply_markup=MAIN_MENU_KB
+        )
     else:
         await q.message.reply_text(f"➕ добавил bot #{bot_id} в очередь", reply_markup=MAIN_MENU_KB)
 
@@ -733,20 +745,24 @@ async def stop_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not MANAGER.running(chat_id) and not MANAGER.queued(chat_id):
         await update.message.reply_text("нет активных ботов", reply_markup=MAIN_MENU_KB)
         return
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛑 остановить всех", callback_data="stop:all")],
-        [InlineKeyboardButton("🛑 остановить одного", callback_data="stop:one")],
-        [InlineKeyboardButton("☑️ выбрать несколько", callback_data="stop:multi")],
-        [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
-    ])
+    kb = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🛑 остановить всех", callback_data="stop:all")],
+            [InlineKeyboardButton("🛑 остановить одного", callback_data="stop:one")],
+            [InlineKeyboardButton("☑️ выбрать несколько", callback_data="stop:multi")],
+            [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
+        ]
+    )
     await update.message.reply_text("остановить ботов:", reply_markup=kb)
 
 
 async def stop_pick_one(q, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = q.message.chat_id
     bots = [b for b in MANAGER.list_all(chat_id) if b.state in (Lifecycle.running, Lifecycle.queued)]
-    kb = [[InlineKeyboardButton(f"🛑 #{b.cfg.bot_id} — {b.cfg.project_name}", callback_data=f"stop:bot:{b.cfg.bot_id}")]
-          for b in bots[:20]]
+    kb = [
+        [InlineKeyboardButton(f"🛑 #{b.cfg.bot_id} — {b.cfg.project_name}", callback_data=f"stop:bot:{b.cfg.bot_id}")]
+        for b in bots[:20]
+    ]
     kb.append([InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")])
     await q.message.reply_text("выбери бота:", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -760,8 +776,13 @@ async def stop_multi(q, context: ContextTypes.DEFAULT_TYPE) -> None:
     kb = []
     for b in bots[:20]:
         mark = "☑️" if b.cfg.bot_id in sel else "⬜️"
-        kb.append([InlineKeyboardButton(f"{mark} #{b.cfg.bot_id} — {b.cfg.project_name}",
-                                        callback_data=f"stop:toggle:{b.cfg.bot_id}")])
+        kb.append(
+            [
+                InlineKeyboardButton(
+                    f"{mark} #{b.cfg.bot_id} — {b.cfg.project_name}", callback_data=f"stop:toggle:{b.cfg.bot_id}"
+                )
+            ]
+        )
     kb.append([InlineKeyboardButton("🛑 остановить выбранные", callback_data="stop:selected")])
     kb.append([InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")])
     await q.message.reply_text("выбери несколько:", reply_markup=InlineKeyboardMarkup(kb))
@@ -775,8 +796,10 @@ async def edit_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not bots:
         await update.message.reply_text("нет активных ботов для изменения", reply_markup=MAIN_MENU_KB)
         return
-    kb = [[InlineKeyboardButton(f"✏️ #{b.cfg.bot_id} — {b.cfg.project_name}", callback_data=f"edit:bot:{b.cfg.bot_id}")]
-          for b in bots[:20]]
+    kb = [
+        [InlineKeyboardButton(f"✏️ #{b.cfg.bot_id} — {b.cfg.project_name}", callback_data=f"edit:bot:{b.cfg.bot_id}")]
+        for b in bots[:20]
+    ]
     kb.append([InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")])
     await update.message.reply_text("выбери бота:", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -795,14 +818,20 @@ async def edit_menu(q, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"interval: {c.interval_sec}s\nmode: {'dry-run' if c.dry_run else 'booking'}\n"
         f"state: {inst.state}"
     )
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("изменить start", callback_data="edit:set_from"),
-         InlineKeyboardButton("изменить end", callback_data="edit:set_to")],
-        [InlineKeyboardButton("интервал", callback_data="edit:set_interval"),
-         InlineKeyboardButton("toggle dry", callback_data="edit:toggle_dry")],
-        [InlineKeyboardButton("перезапустить", callback_data="edit:restart")],
-        [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
-    ])
+    kb = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("изменить start", callback_data="edit:set_from"),
+                InlineKeyboardButton("изменить end", callback_data="edit:set_to"),
+            ],
+            [
+                InlineKeyboardButton("интервал", callback_data="edit:set_interval"),
+                InlineKeyboardButton("toggle dry", callback_data="edit:toggle_dry"),
+            ],
+            [InlineKeyboardButton("перезапустить", callback_data="edit:restart")],
+            [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
+        ]
+    )
     await q.message.reply_text(text, reply_markup=kb)
 
 
@@ -891,10 +920,12 @@ async def status_show(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
             if b.state != Lifecycle.done:
                 lines.append(_bot_line(b))
     text = "\n".join(lines).strip()
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 обновить", callback_data="status:refresh")],
-        [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
-    ])
+    kb = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("🔄 обновить", callback_data="status:refresh")],
+            [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
+        ]
+    )
     if hasattr(msg_or_q, "message"):
         await msg_or_q.message.reply_text(text, reply_markup=kb)
     else:
@@ -904,11 +935,13 @@ async def status_show(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
 # -------------------- settings --------------------
 async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _screen_set(context, Screen.settings_menu)
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"макс. ботов: {MANAGER.settings.max_bots}", callback_data="settings:max")],
-        [InlineKeyboardButton(f"интервал: {MANAGER.settings.interval_sec}s", callback_data="settings:interval")],
-        [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
-    ])
+    kb = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(f"макс. ботов: {MANAGER.settings.max_bots}", callback_data="settings:max")],
+            [InlineKeyboardButton(f"интервал: {MANAGER.settings.interval_sec}s", callback_data="settings:interval")],
+            [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
+        ]
+    )
     await update.message.reply_text("⚙️ настройки:", reply_markup=kb)
 
 
@@ -944,21 +977,3 @@ async def settings_custom_interval(update: Update, context: ContextTypes.DEFAULT
         return
     _screen_set(context, Screen.settings_menu)
     await update.message.reply_text(f"✅ интервал: {val}s", reply_markup=MAIN_MENU_KB)
-
-
-def main() -> None:
-    token = os.getenv("TG_BOT_TOKEN", "").strip()
-    if not token:
-        raise RuntimeError("TG_BOT_TOKEN не задан")
-
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-
-    app = Application.builder().token(token).build()
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CallbackQueryHandler(on_cb))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
-    app.run_polling(close_loop=False)
-
-
-if __name__ == "__main__":
-    main()

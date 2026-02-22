@@ -56,6 +56,54 @@ fragment StudentProjectItem on StudentItem {
 }
 """.strip()
 
+Q_GET_LOCAL_COURSE_GOALS = """
+query getLocalCourseGoals($localCourseId: ID!) {
+  course {
+    getLocalCourseGoals(localCourseId: $localCourseId) {
+      localCourseId
+      globalCourseId
+      courseName
+      courseType
+      localCourseGoals {
+        ...LocalCourse
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}
+fragment LocalCourse on LocalCourseGoalInformation {
+  localCourseGoalId
+  goalId
+  goalName
+  description
+  projectHours
+  signUpDate
+  beginDate
+  deadlineDate
+  checkDate
+  isContentAvailable
+  executionType
+  finalPoint
+  finalPercentage
+  status
+  periodSettings
+  retriesUsed
+  statusUpdateDate
+  retrySettings {
+    ...RetrySettings
+    __typename
+  }
+  __typename
+}
+fragment RetrySettings on ModuleAttemptsSettings {
+  maxModuleAttempts
+  isUnlimitedAttempts
+  __typename
+}
+""".strip()
+
 Q_GET_MODULE = """
 query calendarGetModule($moduleId: ID!) {
   student {
