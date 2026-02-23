@@ -1,4 +1,5 @@
 import html
+import json
 import logging
 import re
 import time
@@ -20,42 +21,17 @@ from client.consts import (
     USER_ROLE,
 )
 from client.errors import School21Error
-from client.models import Tokens, ContentType
+from client.models import Tokens, ContentType, Project, ProjectStatus
 from client.queries import (
     Q_GET_MODULE,
     Q_GET_SLOTS,
     Q_BOOK,
     Q_GET_CUR_PROJECTS,
     Q_GET_USER,
+    Q_GET_LOCAL_COURSE_GOALS,
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _extract_login_action(html_text: str, base_url: str) -> str:
-    m = re.search(
-        r'action\s*=\s*"([^"]*login-actions/authenticate[^"]*)"',
-        html_text,
-        flags=re.IGNORECASE,
-    )
-    if not m:
-        raise School21Error("не смог найти login form action в HTML keycloak")
-    return urljoin(base_url, html.unescape(m.group(1)))
-
-
-def _extract_code_from_redirect_history(history: list[requests.Response]) -> str | None:
-    for resp in reversed(history):
-        loc = resp.headers.get("Location") or resp.headers.get("location")
-        if not loc or "code=" not in loc:
-            continue
-        u = urlparse(loc)
-        if not u.fragment:
-            continue
-        qs = parse_qs(u.fragment)
-        code = (qs.get("code") or [None])[0]
-        if code:
-            return code
-    return None
 
 
 class School21Client:
@@ -71,6 +47,13 @@ class School21Client:
 
         self.sess = requests.Session()
         self.tokens: Tokens | None = None
+        self._user_id: str | None = None
+
+    @property
+    def user_id(self) -> str:
+        if not self._user_id:
+            self._user_id = self.get_user_id()
+        return self._user_id
 
     @property
     def _token_endpoint(self) -> str:
@@ -95,7 +78,7 @@ class School21Client:
         r = self.sess.get(self._auth_endpoint, timeout=self.timeout_sec)
         r.raise_for_status()
 
-        action_url = _extract_login_action(r.text, AUTH_URL)
+        action_url = self._extract_login_action(r.text, AUTH_URL)
         r2 = self.sess.post(
             action_url,
             data={"username": self.username, "password": self.password},
@@ -103,7 +86,7 @@ class School21Client:
             timeout=self.timeout_sec,
         )
 
-        code = _extract_code_from_redirect_history(r2.history + [r2])
+        code = self._extract_code_from_redirect_history(r2.history + [r2])
         if not code:
             raise School21Error("не смог извлечь code из редиректов (логин/пароль/2fa?)")
 
@@ -121,17 +104,89 @@ class School21Client:
         token_resp.raise_for_status()
         payload = token_resp.json()
 
-        access = payload["access_token"]
-        refresh = payload.get("refresh_token", "")
-        expires_in = float(payload.get("expires_in", 300))
-        self.tokens = Tokens(
-            access_token=access,
-            refresh_token=refresh,
-            expires_at_epoch=time.time() + expires_in - 20,
-        )
-        self._set_token_cookie(access)
+        self._set_tokens_from_payload(payload)
 
-    def graphql(self, operation_name: str, query: str, variables: dict[str, Any]) -> dict[str, Any]:
+    def get_user_id(self) -> str:
+        data = self._graphql("getCurrentUser", Q_GET_USER, {})
+        try:
+            return data["user"]["getCurrentUser"]["id"]
+        except Exception as e:
+            raise self._formatted_error("не смог распарсить getCurrentUser", e, data)
+
+    def get_reviewed_projects(self, user_id: str) -> list[Project]:
+        data = self._graphql("getStudentCurrentProjects", Q_GET_CUR_PROJECTS, {"userId": user_id})
+        try:
+            projects = data["student"]["getStudentCurrentProjects"]
+            reviewed_projects = []
+            for project_dict in projects:
+                project = Project(**project_dict)
+                if project.status == ProjectStatus.IN_PROGRESS and project.course_id:
+                    course_projects = self.get_local_course_goals(project.course_id)
+                    course_reviewed_projects = list(
+                        filter(lambda p: p.status == ProjectStatus.P2P_EVALUATIONS, course_projects)
+                    )
+                    reviewed_projects.extend(course_reviewed_projects)
+                    continue
+                if project.status == ProjectStatus.P2P_EVALUATIONS:
+                    reviewed_projects.append(project)
+            return reviewed_projects
+        except Exception as e:
+            raise self._formatted_error("не смог распарсить getStudentCurrentProjects", e, data)
+
+    def get_local_course_goals(self, course_id: int) -> list[Project]:
+        data = self._graphql("getLocalCourseGoals", Q_GET_LOCAL_COURSE_GOALS, {"localCourseId": str(course_id)})
+        try:
+            course_goals: list[dict] = data["course"]["getLocalCourseGoals"]["localCourseGoals"]
+            course_projects = [Project(**goal) for goal in course_goals]
+            return course_projects
+        except Exception as e:
+            raise self._formatted_error("не смог распарсить getLocalCourseGoals", e, data)
+
+    def get_task_and_answer(self, module_id: str) -> tuple[str, str]:
+        data = self._graphql("calendarGetModule", Q_GET_MODULE, {"moduleId": module_id})
+        try:
+            cur = data["student"]["getModuleById"]["currentTask"]
+            return cur["taskId"], cur["lastAnswer"]["id"]
+        except Exception as e:
+            raise self._formatted_error("не смог распарсить calendarGetModule", e, data)
+
+    def get_timeslots(self, task_id: str, from_iso_z: str, to_iso_z: str) -> tuple[list[dict[str, Any]], int]:
+        data = self._graphql(
+            "calendarGetNameLessStudentTimeslotsForReview",
+            Q_GET_SLOTS,
+            {"taskId": task_id, "from": from_iso_z, "to": to_iso_z},
+        )
+        try:
+            review_data = data["student"]["getNameLessStudentTimeslotsForReview"]
+            timeslots = review_data.get("timeSlots") or []
+            booked = int(review_data["projectReviewsInfo"]["relevantReviewByStudentsCount"])
+            return timeslots, booked
+        except Exception as e:
+            raise self._formatted_error("не смог распарсить calendarGetNameLessStudentTimeslotsForReview", e, data)
+
+    def book(
+        self,
+        answer_id: str,
+        start_time_iso_z: str,
+        staff_slot: bool,
+        is_online: bool = True,
+    ) -> str:
+        data = self._graphql(
+            "calendarAddBookingToEventSlot",
+            Q_BOOK,
+            {
+                "answerId": answer_id,
+                "startTime": start_time_iso_z,
+                "wasStaffSlotChosen": staff_slot,
+                "isOnline": is_online,
+            },
+        )
+        try:
+            return data["student"]["addBookingP2PToEventSlot"]["id"]
+        except Exception as e:
+            raise self._formatted_error("не смог распарсить calendarAddBookingToEventSlot", e, data)
+
+    def _graphql(self, operation_name: str, query: str, variables: dict[str, Any]) -> dict[str, Any]:
         self._refresh_if_needed()
         assert self.tokens is not None
 
@@ -178,90 +233,6 @@ class School21Client:
 
         return data.get("data", {})
 
-    def get_user_id(self) -> str:
-        data = self.graphql("getCurrentUser", Q_GET_USER, {})
-        try:
-            return str(data["user"]["getCurrentUser"]["id"])
-        except Exception as e:
-            raise School21Error(f"bad getCurrentUser response: {e}, data={data}")
-
-    def get_project_name(self, module_id: str) -> str:
-        assert self.tokens is not None
-        resp = self.sess.get(
-            f"https://platform.21-school.ru/services/21-school/api/v1/participants/{self.username}/projects/{module_id}",
-            headers={"Authorization": f"Bearer {self.tokens.access_token}"},
-            timeout=self.timeout_sec,
-        )
-        resp.raise_for_status()
-        return resp.json()["title"]
-
-    def get_reviewed_projects(self, user_id: str) -> list[tuple[str, str]]:
-        data = self.graphql("getStudentCurrentProjects", Q_GET_CUR_PROJECTS, {"userId": str(user_id)})
-        try:
-            val = data["student"]["getStudentCurrentProjects"]
-        except Exception as e:
-            raise School21Error(f"bad getStudentCurrentProjects: {e}, data={data}")
-
-        items: list[dict] = []
-        if isinstance(val, list):
-            items = val
-        elif isinstance(val, dict) and "goals" in val and isinstance(val["goals"], list):
-            items = val["goals"]
-        elif isinstance(val, dict) and "items" in val and isinstance(val["items"], list):
-            items = val["items"]
-        elif isinstance(val, dict) and val:
-            items = [val]
-
-        out: list[tuple[str, str]] = []
-        for p in items:
-            if p.get("goalStatus") == "P2P_EVALUATIONS" and p.get("goalId"):
-                out.append((str(p["goalId"]), str(p.get("name") or p.get("title") or "")))
-        return out
-
-    def get_task_and_answer(self, module_id: str) -> tuple[str, str]:
-        data = self.graphql("calendarGetModule", Q_GET_MODULE, {"moduleId": str(module_id)})
-        try:
-            cur = data["student"]["getModuleById"]["currentTask"]
-            return str(cur["taskId"]), str(cur["lastAnswer"]["id"])
-        except Exception as e:
-            raise School21Error(f"не смог распарсить task/answer: {e}")
-
-    def get_timeslots(self, task_id: str, from_iso_z: str, to_iso_z: str) -> tuple[list[dict[str, Any]], int]:
-        data = self.graphql(
-            "calendarGetNameLessStudentTimeslotsForReview",
-            Q_GET_SLOTS,
-            {"taskId": str(task_id), "from": from_iso_z, "to": to_iso_z},
-        )
-        try:
-            review_data = data["student"]["getNameLessStudentTimeslotsForReview"]
-            timeslots = review_data.get("timeSlots") or []
-            booked = int(review_data["projectReviewsInfo"]["relevantReviewByStudentsCount"])
-            return timeslots, booked
-        except Exception as e:
-            raise School21Error(f"не смог распарсить timeslots: {e}")
-
-    def book(
-        self,
-        answer_id: str,
-        start_time_iso_z: str,
-        staff_slot: bool,
-        is_online: bool = True,
-    ) -> str:
-        data = self.graphql(
-            "calendarAddBookingToEventSlot",
-            Q_BOOK,
-            {
-                "answerId": str(answer_id),
-                "startTime": start_time_iso_z,
-                "wasStaffSlotChosen": bool(staff_slot),
-                "isOnline": bool(is_online),
-            },
-        )
-        try:
-            return str(data["student"]["addBookingP2PToEventSlot"]["id"])
-        except Exception as e:
-            raise School21Error(f"не смог распарсить booking id: {e}")
-
     def _refresh_if_needed(self) -> None:
         if not self.tokens or not self.tokens.refresh_token:
             self.login()
@@ -284,19 +255,48 @@ class School21Client:
             return
 
         payload = resp.json()
+        self._set_tokens_from_payload(payload)
+
+    def _set_tokens_from_payload(self, payload: dict[str, Any]) -> None:
         access = payload["access_token"]
-        refresh = payload.get("refresh_token", self.tokens.refresh_token)
+        refresh = payload.get("refresh_token", self.tokens.refresh_token if self.tokens else "")
         expires_in = float(payload.get("expires_in", 300))
         self.tokens = Tokens(
             access_token=access,
             refresh_token=refresh,
-            expires_at_epoch=time.time() + expires_in - 20,
+            expires_at_epoch=time.time() + expires_in,
         )
-        self._set_token_cookie(access)
-
-    def _set_token_cookie(self, access: str) -> None:
         self.sess.cookies.set("tokenId", access, domain="platform.21-school.ru", path="/")
         self.sess.cookies.set("tokenId", access, domain=".21-school.ru", path="/")
+
+    def _extract_login_action(self, html_text: str, base_url: str) -> str:
+        m = re.search(
+            r'action\s*=\s*"([^"]*login-actions/authenticate[^"]*)"',
+            html_text,
+            flags=re.IGNORECASE,
+        )
+        if not m:
+            raise School21Error("не смог найти login form action в HTML keycloak")
+        return urljoin(base_url, html.unescape(m.group(1)))
+
+    def _extract_code_from_redirect_history(self, history: list[requests.Response]) -> str | None:
+        for resp in reversed(history):
+            loc = resp.headers.get("Location") or resp.headers.get("location")
+            if not loc or "code=" not in loc:
+                continue
+            u = urlparse(loc)
+            if not u.fragment:
+                continue
+            qs = parse_qs(u.fragment)
+            code = (qs.get("code") or [None])[0]
+            if code:
+                return code
+        return None
+
+    def _formatted_error(self, error_message: str, error: Exception, data: dict[str, Any]) -> School21Error:
+        return School21Error(
+            f"{error_message}:\n\nError: {error}\n\nData:\n{json.dumps(data, ensure_ascii=False, indent=4)}"
+        )
 
 
 def pick_candidate_start(timeslots: list[dict[str, Any]]) -> tuple[str, bool] | None:

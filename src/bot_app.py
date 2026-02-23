@@ -556,27 +556,29 @@ async def start_begin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     client.login()
 
     try:
-        user_id = client.get_user_id()
-        projects = client.get_reviewed_projects(user_id)
+        projects = client.get_reviewed_projects(client.user_id)
     except Exception as e:
         await update.message.reply_text(f"❌ не смог получить проекты: {e}", reply_markup=MAIN_MENU_KB)
         return
 
     if not projects:
-        await update.message.reply_text("нет проектов с goalStatus=P2P_EVALUATIONS", reply_markup=MAIN_MENU_KB)
+        await update.message.reply_text("📭 нет активных проектов на проверке", reply_markup=MAIN_MENU_KB)
         return
 
-    context.chat_data["projects_map"] = {pid: name for pid, name in projects}
+    context.chat_data["projects_map"] = {project.id: project.name for project in projects}
 
     if len(projects) == 1:
-        pid, name = projects[0]
-        context.chat_data["start_project_id"] = pid
-        context.chat_data["start_project_name"] = name
-        await update.message.reply_text(f"проект выбран: {name} (id {pid})", reply_markup=MAIN_MENU_KB)
+        project = projects[0]
+        context.chat_data["start_project_id"] = project.id
+        context.chat_data["start_project_name"] = project.name
+        await update.message.reply_text(f"проект выбран: {project.name} (id {project.id})", reply_markup=MAIN_MENU_KB)
         await start_pick_num(update, context)
         return
 
-    kb = [[InlineKeyboardButton(f"{name} ({pid})", callback_data=f"start:proj:{pid}")] for pid, name in projects[:20]]
+    kb = [
+        [InlineKeyboardButton(f"{project.name} ({project.id})", callback_data=f"start:proj:{project.id}")]
+        for project in projects[:20]
+    ]
     kb.append([InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")])
     await update.message.reply_text("выбери проект:", reply_markup=InlineKeyboardMarkup(kb))
 

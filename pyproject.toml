@@ -20,6 +20,7 @@ dependencies = [
     "packaging==26.0",
     "pathspec==1.0.4",
     "platformdirs==4.9.2",
+    "pydantic==2.12.5",
     "python-telegram-bot==22.6",
     "pytokens==0.4.1",
     "requests==2.32.5",
