@@ -33,7 +33,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Installing separately from its dependencies allows optimal layer caching
 COPY src/ /app/src
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked
+    uv sync --locked \
+    && rm -rf /app/src/s21_slot_bot.egg-info
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
