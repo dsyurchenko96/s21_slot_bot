@@ -10,7 +10,7 @@ from urllib.parse import urljoin, urlparse, parse_qs
 
 import requests
 
-from client.consts import (
+from s21_slot_bot.client.consts import (
     AUTH_URL,
     REALM,
     CLIENT_ID,
@@ -20,9 +20,9 @@ from client.consts import (
     X_EDU_PRODUCT_ID,
     USER_ROLE,
 )
-from client.errors import School21Error
-from client.models import Tokens, ContentType, Project, ProjectStatus
-from client.queries import (
+from s21_slot_bot.client.errors import School21Error
+from s21_slot_bot.client.models import Tokens, ContentType, Project, ProjectStatus
+from s21_slot_bot.client.queries import (
     Q_GET_MODULE,
     Q_GET_SLOTS,
     Q_BOOK,

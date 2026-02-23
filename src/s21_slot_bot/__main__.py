@@ -3,7 +3,7 @@ import os
 
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
-from bot_app import cmd_start, on_cb, on_text
+from s21_slot_bot.bot_app import cmd_start, on_cb, on_text
 
 
 def main() -> None:

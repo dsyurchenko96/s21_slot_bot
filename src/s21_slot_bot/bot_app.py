@@ -13,7 +13,7 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from client.s21_client import School21Client, School21Error, pick_candidate_start
+from s21_slot_bot.client.s21_client import School21Client, School21Error, pick_candidate_start
 
 MAIN_MENU_KB = ReplyKeyboardMarkup(
     [
