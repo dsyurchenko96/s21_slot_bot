@@ -1,15 +1,3 @@
-FROM python:3.12-slim
-
-WORKDIR /app
-COPY requirements.txt /app/
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY src/ /app/
-
-ENV PYTHONUNBUFFERED=1
-CMD ["python", "-m", "app"]
-
-
 # Use a Python image with uv pre-installed
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
