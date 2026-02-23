@@ -9,7 +9,7 @@ from urllib.parse import urljoin, urlparse, parse_qs
 
 import requests
 
-from src.client.consts import (
+from client.consts import (
     AUTH_URL,
     REALM,
     CLIENT_ID,
@@ -19,9 +19,9 @@ from src.client.consts import (
     X_EDU_PRODUCT_ID,
     USER_ROLE,
 )
-from src.client.errors import School21Error
-from src.client.models import Tokens, ContentType
-from src.client.queries import (
+from client.errors import School21Error
+from client.models import Tokens, ContentType
+from client.queries import (
     Q_GET_MODULE,
     Q_GET_SLOTS,
     Q_BOOK,
