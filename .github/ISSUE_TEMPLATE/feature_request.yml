@@ -1,0 +1,84 @@
+name: "✨ Фича"
+description: "Предложить улучшение / новую функциональность"
+title: "[Фича]: "
+labels: [ "enhancement" ]
+assignees: [ ]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Опиши задачу так, чтобы было понятно *зачем* это нужно и *как* проверить готовность.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: "Какая проблема решается?"
+      description: "Что сейчас неудобно/невозможно?"
+      placeholder: "Например: хочется запускать несколько ботов и управлять ими из меню."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: "Предлагаемое решение"
+      description: "Как ты видишь реализацию (UI/поведение/настройки)?"
+      placeholder: |
+        Пример:
+        - добавить пункт меню ...
+        - добавить настройки ...
+        - добавить команду ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "Альтернативы / обходные пути"
+      description: "Есть ли варианты, которые ты рассматривал(а)?"
+      placeholder: "Например: использовать cron на сервере, отдельный скрипт, etc."
+    validations:
+      required: false
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: "Критерии готовности (acceptance criteria)"
+      description: "По каким условиям можно сказать, что фича сделана?"
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: "Приоритет"
+      options:
+        - "P0 (очень нужно)"
+        - "P1 (хочу скоро)"
+        - "P2 (может подождать)"
+        - "P3 (идея на будущее)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: "Дополнительный контекст / скриншоты"
+      description: "Ссылки, примеры, скриншоты, связанные issue."
+      placeholder: "Можно вставить ссылки на страницы платформы или примеры поведения."
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "Проверка"
+      options:
+        - label: "Я проверил(а), что подобного issue ещё нет."
+          required: true
+        - label: "Я готов(а) помочь уточнить требования или протестировать."
+          required: false

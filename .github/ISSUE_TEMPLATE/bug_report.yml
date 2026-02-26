@@ -1,0 +1,114 @@
+name: "🐛 Баг"
+description: "Сообщить о проблеме в Slot bot"
+title: "[Баг]: "
+labels: [ "bug" ]
+assignees: [ ]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо! Чем точнее детали — тем быстрее получится воспроизвести и починить.
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: "Серьёзность"
+      options:
+        - "Критично (бот не работает / не деплоится)"
+        - "Высокая (ключевая функция сломана)"
+        - "Средняя (неудобно, но есть обходной путь)"
+        - "Низкая (косметика/текст)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: "Краткое описание"
+      description: "Что именно пошло не так?"
+      placeholder: "Например: бот перестал бронировать слоты после обновления."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Шаги для воспроизведения"
+      description: "Опиши пошагово, как получить проблему."
+      placeholder: |
+        1) /start
+        2) ▶️ Начать
+        3) Выбрать проект ...
+        4) ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Ожидаемое поведение"
+      placeholder: "Например: бот должен найти слот и отправить уведомление."
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: "Фактическое поведение"
+      placeholder: "Например: бот пишет 'нет слотов', хотя на сайте они есть."
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Логи / вывод"
+      description: "Вставь лог из docker compose logs / консоли. Секреты (токены/пароли) удаляй."
+      render: text
+      placeholder: |
+        docker compose logs -n 200
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: "Версия/коммит"
+      description: "Хеш коммита или тег, на котором проявляется."
+      placeholder: "Например: 1a2b3c4 или v0.2.1"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: "Среда"
+      options:
+        - "VPS / Docker"
+        - "Локально"
+        - "Другое"
+    validations:
+      required: true
+
+  - type: textarea
+    id: env_details
+    attributes:
+      label: "Детали окружения"
+      description: "ОС, версия Docker/Compose, Python, где запущено."
+      placeholder: |
+        OS: Ubuntu 22.04
+        Docker: 26.x
+        Compose: v2.x
+        Python: 3.12
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "Проверка"
+      options:
+        - label: "Я удалил(а) из логов токены/пароли и другие секреты."
+          required: true
+        - label: "Я проверил(а), что подобного issue ещё нет."
+          required: true
