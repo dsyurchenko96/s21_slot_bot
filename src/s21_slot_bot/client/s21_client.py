@@ -10,6 +10,7 @@ from urllib.parse import urljoin, urlparse, parse_qs
 
 import requests
 
+from s21_slot_bot.client.config import S21ClientConfig
 from s21_slot_bot.client.consts import (
     AUTH_URL,
     REALM,
@@ -35,15 +36,10 @@ logger = logging.getLogger(__name__)
 
 
 class School21Client:
-    def __init__(
-        self,
-        username: str,
-        password: str,
-        timeout_sec: int = 25,
-    ):
-        self.username = username
-        self.password = password
-        self.timeout_sec = timeout_sec
+    def __init__(self, config: S21ClientConfig):
+        self.username = config.username
+        self.password = config.password.get_secret_value()
+        self.timeout_sec = config.timeout_sec
 
         self.sess = requests.Session()
         self.tokens: Tokens | None = None
@@ -75,18 +71,18 @@ class School21Client:
         )
 
     def login(self) -> None:
-        r = self.sess.get(self._auth_endpoint, timeout=self.timeout_sec)
-        r.raise_for_status()
+        auth_resp = self.sess.get(self._auth_endpoint, timeout=self.timeout_sec)
+        auth_resp.raise_for_status()
 
-        action_url = self._extract_login_action(r.text, AUTH_URL)
-        r2 = self.sess.post(
+        action_url = self._extract_login_action(auth_resp.text, AUTH_URL)
+        action_resp = self.sess.post(
             action_url,
             data={"username": self.username, "password": self.password},
             allow_redirects=True,
             timeout=self.timeout_sec,
         )
 
-        code = self._extract_code_from_redirect_history(r2.history + [r2])
+        code = self._extract_code_from_redirect_history(action_resp.history + [action_resp])
         if not code:
             raise School21Error("не смог извлечь code из редиректов (логин/пароль/2fa?)")
 
