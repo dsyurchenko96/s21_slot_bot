@@ -49,7 +49,7 @@ class Stats(BaseModel):
 class BotConfig(BaseModel):
     bot_id: str
     chat_id: int
-    project_id: str
+    project_id: int
     project_name: str
     required_reviews: int
     from_iso_z: str
