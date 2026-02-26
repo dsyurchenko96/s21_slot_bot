@@ -1,6 +1,6 @@
 name: "✨ Фича"
 description: "Предложить улучшение / новую функциональность"
-title: "[Фича]: "
+title: "[Feature Request]: "
 labels: [ "enhancement" ]
 assignees: [ ]
 body:

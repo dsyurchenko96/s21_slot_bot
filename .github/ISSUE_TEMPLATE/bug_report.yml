@@ -1,6 +1,6 @@
 name: "🐛 Баг"
 description: "Сообщить о проблеме в Slot bot"
-title: "[Баг]: "
+title: "[Bug Report]: "
 labels: [ "bug" ]
 assignees: [ ]
 body:
