@@ -37,12 +37,12 @@ logger = logging.getLogger(__name__)
 
 class School21Client:
     def __init__(self, config: S21ClientConfig):
-        self.username = config.username
-        self.password = config.password.get_secret_value()
-        self.timeout_sec = config.timeout_sec
+        self._username = config.username
+        self._password = config.password.get_secret_value()
+        self._timeout_sec = config.timeout_sec
 
-        self.sess = requests.Session()
-        self.tokens: Tokens | None = None
+        self._sess = requests.Session()
+        self._tokens: Tokens | None = None
         self._user_id: str | None = None
 
     @property
@@ -71,22 +71,22 @@ class School21Client:
         )
 
     def login(self) -> None:
-        auth_resp = self.sess.get(self._auth_endpoint, timeout=self.timeout_sec)
+        auth_resp = self._sess.get(self._auth_endpoint, timeout=self._timeout_sec)
         auth_resp.raise_for_status()
 
         action_url = self._extract_login_action(auth_resp.text, AUTH_URL)
-        action_resp = self.sess.post(
+        action_resp = self._sess.post(
             action_url,
-            data={"username": self.username, "password": self.password},
+            data={"username": self._username, "password": self._password},
             allow_redirects=True,
-            timeout=self.timeout_sec,
+            timeout=self._timeout_sec,
         )
 
         code = self._extract_code_from_redirect_history(action_resp.history + [action_resp])
         if not code:
             raise School21Error("не смог извлечь code из редиректов (логин/пароль/2fa?)")
 
-        token_resp = self.sess.post(
+        token_resp = self._sess.post(
             self._token_endpoint,
             data={
                 "code": code,
@@ -95,7 +95,7 @@ class School21Client:
                 "redirect_uri": PLATFORM_URL,
             },
             headers={"Content-Type": ContentType.APPLICATION_FORM_URL_ENCODED},
-            timeout=self.timeout_sec,
+            timeout=self._timeout_sec,
         )
         token_resp.raise_for_status()
         payload = token_resp.json()
@@ -184,7 +184,7 @@ class School21Client:
 
     def _graphql(self, operation_name: str, query: str, variables: dict[str, Any]) -> dict[str, Any]:
         self._refresh_if_needed()
-        assert self.tokens is not None
+        assert self._tokens is not None
 
         headers = {
             "Content-Type": ContentType.APPLICATION_JSON,
@@ -197,7 +197,7 @@ class School21Client:
             "Referer": f"{PLATFORM_URL}/calendar",
         }
 
-        resp = self.sess.post(
+        resp = self._sess.post(
             GRAPHQL_URL,
             json={
                 "operationName": operation_name,
@@ -205,12 +205,12 @@ class School21Client:
                 "query": query,
             },
             headers=headers,
-            timeout=self.timeout_sec,
+            timeout=self._timeout_sec,
         )
 
         if resp.status_code in {HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN}:
             self.login()
-            resp = self.sess.post(
+            resp = self._sess.post(
                 GRAPHQL_URL,
                 json={
                     "operationName": operation_name,
@@ -218,7 +218,7 @@ class School21Client:
                     "query": query,
                 },
                 headers=headers,
-                timeout=self.timeout_sec,
+                timeout=self._timeout_sec,
             )
 
         resp.raise_for_status()
@@ -230,21 +230,21 @@ class School21Client:
         return data.get("data", {})
 
     def _refresh_if_needed(self) -> None:
-        if not self.tokens or not self.tokens.refresh_token:
+        if not self._tokens or not self._tokens.refresh_token:
             self.login()
             return
-        if time.time() < self.tokens.expires_at_epoch:
+        if time.time() < self._tokens.expires_at_epoch:
             return
 
-        resp = self.sess.post(
+        resp = self._sess.post(
             self._token_endpoint,
             data={
                 "grant_type": "refresh_token",
                 "client_id": CLIENT_ID,
-                "refresh_token": self.tokens.refresh_token,
+                "refresh_token": self._tokens.refresh_token,
             },
             headers={"Content-Type": ContentType.APPLICATION_FORM_URL_ENCODED},
-            timeout=self.timeout_sec,
+            timeout=self._timeout_sec,
         )
         if not resp.ok:
             self.login()
@@ -255,15 +255,15 @@ class School21Client:
 
     def _set_tokens_from_payload(self, payload: dict[str, Any]) -> None:
         access = payload["access_token"]
-        refresh = payload.get("refresh_token", self.tokens.refresh_token if self.tokens else "")
+        refresh = payload.get("refresh_token", self._tokens.refresh_token if self._tokens else "")
         expires_in = float(payload.get("expires_in", 300))
-        self.tokens = Tokens(
+        self._tokens = Tokens(
             access_token=access,
             refresh_token=refresh,
             expires_at_epoch=time.time() + expires_in,
         )
-        self.sess.cookies.set("tokenId", access, domain="platform.21-school.ru", path="/")
-        self.sess.cookies.set("tokenId", access, domain=".21-school.ru", path="/")
+        self._sess.cookies.set("tokenId", access, domain="platform.21-school.ru", path="/")
+        self._sess.cookies.set("tokenId", access, domain=".21-school.ru", path="/")
 
     def _extract_login_action(self, html_text: str, base_url: str) -> str:
         m = re.search(
