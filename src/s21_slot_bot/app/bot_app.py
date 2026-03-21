@@ -1,8 +1,6 @@
 import asyncio
-import os
-import re
 import secrets
-from datetime import datetime, timedelta, UTC
+from datetime import datetime, timedelta
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 from telegram.ext import (
@@ -15,6 +13,7 @@ from s21_slot_bot.app.consts import DEFAULT_JITTER_SEC
 from s21_slot_bot.app.models import Lifecycle, Screen, BotConfig, BotInstance
 from s21_slot_bot.client.config import S21ClientConfig
 from s21_slot_bot.client.s21_client import School21Client, School21Error, pick_candidate_start
+from s21_slot_bot.common.time import str_to_dt, dt_to_pretty
 
 MAIN_MENU_KB = ReplyKeyboardMarkup(
     [
@@ -68,7 +67,7 @@ class BotManager:
         inst = self.bots.get(bot_id)
         if not inst:
             return False
-        if inst.task and not inst.task.DONE():
+        if inst.task and not inst.task.done():
             inst.task.cancel()
         inst.state = Lifecycle.STOPPED
         q = self.queues.get(inst.cfg.chat_id, [])
@@ -113,48 +112,13 @@ def _screen_get(ctx: ContextTypes.DEFAULT_TYPE) -> Screen:
         return Screen.MENU
 
 
-def _isoz_now() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-
-
-def _isoz_plus(hours: int = 0, minutes: int = 0) -> str:
-    dt = datetime.now(UTC) + timedelta(hours=hours, minutes=minutes)
-    return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-
-
-def _isoz_to_dt(s: str) -> datetime:
-    return datetime.strptime(s, "%Y-%m-%dT%H:%M:%S.000Z").replace(tzinfo=UTC)
-
-
-def _parse_dt_to_utc_z(text: str) -> str:
-    s = (text or "").strip()
-    if re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$", s):
-        return s if "." in s else s.replace("Z", ".000Z")
-
-    m = re.match(r"^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})$", s)
-    if not m:
-        raise ValueError("нужен формат ISO Z или 'YYYY-MM-DD HH:MM'")
-
-    dt_local = datetime.strptime(f"{m.group(1)} {m.group(2)}", "%Y-%m-%d %H:%M")
-
-    off = os.getenv("BOT_TZ_OFFSET", "+03:00")
-    sign = 1 if off[0] == "+" else -1
-    hh = int(off[1:3])
-    mm = int(off[4:6])
-    delta = sign * (hh * 60 + mm)
-
-    utc_ts = dt_local.timestamp() - delta * 60
-    dt_utc = datetime.fromtimestamp(utc_ts, UTC)
-    return dt_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-
-
 def _bot_line(inst: BotInstance) -> str:
     c = inst.cfg
-    lp = inst.stats.last_ping.strftime("%Y-%m-%d %H:%M:%S") if inst.stats.last_ping else "—"
+    lp = dt_to_pretty(inst.stats.last_ping) if inst.stats.last_ping else "—"
     return (
         f"#{c.bot_id} [{inst.state}] {c.project_name} "
         f"({c.required_reviews} reviews, {'dry' if c.dry_run else 'book'})\n"
-        f"utc: {c.from_iso_z} → {c.to_iso_z}\n"
+        f"time: {dt_to_pretty(c.from_dt)} → {dt_to_pretty(c.to_dt)}\n"
         f"last ping: {lp}, attempts: {inst.stats.attempts_total} "
         f"(ok {inst.stats.attempts_success} / fail {inst.stats.attempts_failed} / booked {inst.stats.currently_booked})\n"
     )
@@ -183,7 +147,7 @@ async def run_bot_loop(inst: BotInstance, app: Application, manager: BotManager)
         if inst.state != Lifecycle.RUNNING:
             return
 
-        if datetime.now(UTC) >= _isoz_to_dt(cfg.to_iso_z):
+        if datetime.now(tz=MANAGER.config.timezone) >= cfg.to_dt:
             inst.state = Lifecycle.DONE
             await app.bot.send_message(
                 chat_id, f"⌛️ bot #{cfg.bot_id}: окно поиска истекло.", reply_markup=MAIN_MENU_KB
@@ -192,16 +156,17 @@ async def run_bot_loop(inst: BotInstance, app: Application, manager: BotManager)
             return
 
         inst.stats.attempts_total += 1
-        inst.stats.last_ping = datetime.now(UTC)
+        inst.stats.last_ping = datetime.now(tz=MANAGER.config.timezone)
 
         try:
-            slots, already_booked = client.get_timeslots(task_id, cfg.from_iso_z, cfg.to_iso_z)
+            slots, already_booked = client.get_timeslots(task_id, cfg.from_dt, cfg.to_dt)
             currently_booked = inst.stats.currently_booked
             inst.stats.currently_booked = already_booked
             missing = cfg.required_reviews - int(already_booked)
             # TODO: move currently_booked into a separate Project entity (store in DB?),
             #  to avoid multiple bots for 1 project sending the same message
             if already_booked < currently_booked:
+                # TODO: output which review was cancelled
                 await app.bot.send_message(
                     chat_id,
                     f"⚠️ bot #{cfg.bot_id} отменена проверка\n"
@@ -332,17 +297,18 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     if data.startswith("start:from:"):
+        now = datetime.now(tz=MANAGER.config.timezone)
         kind = data.split(":")[2]
         if kind == "now":
-            context.chat_data["start_from"] = _isoz_now()
+            context.chat_data["start_from"] = now
             await start_pick_to(q, context)
             return
         if kind == "p30":
-            context.chat_data["start_from"] = _isoz_plus(minutes=30)
+            context.chat_data["start_from"] = now + timedelta(minutes=30)
             await start_pick_to(q, context)
             return
         if kind == "p60":
-            context.chat_data["start_from"] = _isoz_plus(hours=1)
+            context.chat_data["start_from"] = now + timedelta(hours=1)
             await start_pick_to(q, context)
             return
         if kind == "custom":
@@ -351,13 +317,14 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
 
     if data.startswith("start:to:"):
+        from_dt: datetime = context.chat_data["start_from"]
         kind = data.split(":")[2]
         if kind == "p120":
-            context.chat_data["start_to"] = _isoz_plus(hours=2)
+            context.chat_data["start_to"] = from_dt + timedelta(hours=2)
             await start_pick_mode(q, context)
             return
         if kind == "p240":
-            context.chat_data["start_to"] = _isoz_plus(hours=4)
+            context.chat_data["start_to"] = from_dt + timedelta(hours=4)
             await start_pick_mode(q, context)
             return
         if kind == "custom":
@@ -544,7 +511,7 @@ async def start_pick_from(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def start_custom_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        context.chat_data["start_from"] = _parse_dt_to_utc_z(update.message.text)
+        context.chat_data["start_from"] = str_to_dt(update.message.text, MANAGER.config.timezone)
     except Exception as e:
         await update.message.reply_text(f"❌ {e}\nпопробуй ещё раз", reply_markup=MAIN_MENU_KB)
         return
@@ -571,7 +538,7 @@ async def start_pick_to(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def start_custom_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
-        context.chat_data["start_to"] = _parse_dt_to_utc_z(update.message.text)
+        context.chat_data["start_to"] = str_to_dt(update.message.text, MANAGER.config.timezone)
     except Exception as e:
         await update.message.reply_text(f"❌ {e}\nпопробуй ещё раз", reply_markup=MAIN_MENU_KB)
         return
@@ -607,7 +574,7 @@ async def start_confirm(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
     summary = (
         f"проект: {name} (id {pid})\n"
         f"нужно проверок: {n}\n"
-        f"utc окно: {frm} → {to}\n"
+        f"окно: {dt_to_pretty(frm)} → {dt_to_pretty(to)}\n"
         f"режим: {'dry-run' if dry else 'booking'}\n\n"
         f"активных: {MANAGER.active_count(chat_id)} / max {MANAGER.config.max_bots}"
     )
@@ -641,8 +608,8 @@ async def start_finalize(q, context: ContextTypes.DEFAULT_TYPE, action: str) -> 
         project_id=pid,
         project_name=name,
         required_reviews=n,
-        from_iso_z=frm,
-        to_iso_z=to,
+        from_dt=frm,
+        to_dt=to,
         interval_sec=MANAGER.config.poll_interval_sec,
         dry_run=dry,
     )
@@ -738,7 +705,7 @@ async def edit_menu(q, context: ContextTypes.DEFAULT_TYPE) -> None:
     c = inst.cfg
     text = (
         f"✏️ bot #{c.bot_id}\n{c.project_name}\n"
-        f"utc: {c.from_iso_z} → {c.to_iso_z}\n"
+        f"utc: {c.from_dt} → {c.to_dt}\n"
         f"interval: {c.interval_sec}s\nmode: {'dry-run' if c.dry_run else 'booking'}\n"
         f"state: {inst.state}"
     )
@@ -767,7 +734,7 @@ async def edit_custom_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         _screen_set(context, Screen.MENU)
         return
     try:
-        inst.cfg.from_iso_z = _parse_dt_to_utc_z(update.message.text)
+        inst.cfg.from_dt = str_to_dt(update.message.text, MANAGER.config.timezone)
     except Exception as e:
         await update.message.reply_text(f"❌ {e}", reply_markup=MAIN_MENU_KB)
         return
@@ -783,7 +750,7 @@ async def edit_custom_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         _screen_set(context, Screen.MENU)
         return
     try:
-        inst.cfg.to_iso_z = _parse_dt_to_utc_z(update.message.text)
+        inst.cfg.to_dt = str_to_dt(update.message.text, MANAGER.config.timezone)
     except Exception as e:
         await update.message.reply_text(f"❌ {e}", reply_markup=MAIN_MENU_KB)
         return
@@ -828,6 +795,7 @@ async def edit_restart(q, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 # -------------------- status --------------------
+# TODO: break down bot statuses based on project
 async def status_show(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = msg_or_q.message.chat_id if hasattr(msg_or_q, "message") else msg_or_q.message.chat_id
     running = MANAGER.running_count(chat_id)

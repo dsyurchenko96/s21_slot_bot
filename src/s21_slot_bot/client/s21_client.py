@@ -4,6 +4,7 @@ import logging
 import re
 import time
 import uuid
+from datetime import datetime
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import urljoin, urlparse, parse_qs
@@ -31,6 +32,7 @@ from s21_slot_bot.client.queries import (
     Q_GET_USER,
     Q_GET_LOCAL_COURSE_GOALS,
 )
+from s21_slot_bot.common.time import dt_to_pretty
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +148,8 @@ class School21Client:
         except Exception as e:
             raise self._formatted_error("не смог распарсить calendarGetModule", e, data)
 
-    def get_timeslots(self, task_id: str, from_iso_z: str, to_iso_z: str) -> tuple[list[dict[str, Any]], int]:
+    def get_timeslots(self, task_id: str, from_dt: datetime, to_dt: datetime) -> tuple[list[dict[str, Any]], int]:
+        from_iso_z, to_iso_z = dt_to_pretty(from_dt), dt_to_pretty(to_dt)
         data = self._graphql(
             "calendarGetNameLessStudentTimeslotsForReview",
             Q_GET_SLOTS,

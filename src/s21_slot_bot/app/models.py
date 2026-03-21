@@ -1,9 +1,8 @@
 import asyncio
 import enum
-from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, AwareDatetime
 
 
 class Lifecycle(StrEnum):
@@ -39,7 +38,7 @@ class Screen(StrEnum):
 
 
 class Stats(BaseModel):
-    last_ping: datetime | None = None
+    last_ping: AwareDatetime | None = None
     attempts_total: int = 0
     attempts_success: int = 0
     attempts_failed: int = 0
@@ -52,8 +51,8 @@ class BotConfig(BaseModel):
     project_id: int
     project_name: str
     required_reviews: int
-    from_iso_z: str
-    to_iso_z: str
+    from_dt: AwareDatetime
+    to_dt: AwareDatetime
     interval_sec: int
     dry_run: bool
 
