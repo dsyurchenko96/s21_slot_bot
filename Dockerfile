@@ -1,6 +1,6 @@
 # Taken from https://github.com/astral-sh/uv-docker-example/blob/main/Dockerfile
 # Use a Python image with uv pre-installed
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
 
 # Setup a non-root user
 RUN groupadd --system --gid 999 nonroot \
