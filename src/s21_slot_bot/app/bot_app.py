@@ -2,7 +2,7 @@ import asyncio
 import secrets
 from datetime import datetime, timedelta
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update, CallbackQuery
 from telegram.ext import (
     Application,
     ContextTypes,
@@ -472,7 +472,15 @@ async def start_begin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text("выбери проект:", reply_markup=InlineKeyboardMarkup(kb))
 
 
-async def start_pick_num(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _respond_to_input(user_input: Update | CallbackQuery, message: str, kb: InlineKeyboardMarkup) -> None:
+    match user_input:
+        case Update():
+            await user_input.message.reply_text(message, reply_markup=kb)
+        case CallbackQuery():
+            await user_input.edit_message_text(message, reply_markup=kb)
+
+
+async def start_pick_num(user_input: Update | CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
     _screen_set(context, Screen.START_PICK_NUM)
     kb = InlineKeyboardMarkup(
         [
@@ -484,13 +492,11 @@ async def start_pick_num(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
             [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
         ]
     )
-    if hasattr(msg_or_q, "message"):
-        await msg_or_q.message.reply_text("сколько проверок нужно (1–3)?", reply_markup=kb)
-    else:
-        await msg_or_q.edit_message_text("сколько проверок нужно (1–3)?", reply_markup=kb)
+    message = "сколько проверок нужно (1–3)?"
+    await _respond_to_input(user_input, message, kb)
 
 
-async def start_pick_from(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start_pick_from(user_input: Update | CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
     _screen_set(context, Screen.START_PICK_FROM)
     kb = InlineKeyboardMarkup(
         [
@@ -503,10 +509,8 @@ async def start_pick_from(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
             [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
         ]
     )
-    if hasattr(msg_or_q, "message"):
-        await msg_or_q.message.reply_text("выбери start (по умолчанию сейчас):", reply_markup=kb)
-    else:
-        await msg_or_q.edit_message_text("выбери start (по умолчанию сейчас):", reply_markup=kb)
+    message = "выбери start (по умолчанию сейчас):"
+    await _respond_to_input(user_input, message, kb)
 
 
 async def start_custom_from(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -518,7 +522,7 @@ async def start_custom_from(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await start_pick_to(update, context)
 
 
-async def start_pick_to(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start_pick_to(user_input: Update | CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
     _screen_set(context, Screen.START_PICK_TO)
     kb = InlineKeyboardMarkup(
         [
@@ -530,10 +534,8 @@ async def start_pick_to(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
             [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
         ]
     )
-    if hasattr(msg_or_q, "message"):
-        await msg_or_q.message.reply_text("выбери end (по умолчанию +2ч):", reply_markup=kb)
-    else:
-        await msg_or_q.edit_message_text("выбери end (по умолчанию +2ч):", reply_markup=kb)
+    message = "выбери end (по умолчанию +2ч от start):"
+    await _respond_to_input(user_input, message, kb)
 
 
 async def start_custom_to(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -545,7 +547,7 @@ async def start_custom_to(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await start_pick_mode(update, context)
 
 
-async def start_pick_mode(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start_pick_mode(user_input: Update | CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
     _screen_set(context, Screen.START_PICK_MODE)
     kb = InlineKeyboardMarkup(
         [
@@ -554,15 +556,13 @@ async def start_pick_mode(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
             [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
         ]
     )
-    if hasattr(msg_or_q, "message"):
-        await msg_or_q.message.reply_text("выбери режим:", reply_markup=kb)
-    else:
-        await msg_or_q.edit_message_text("выбери режим:", reply_markup=kb)
+    message = "выбери режим:"
+    await _respond_to_input(user_input, message, kb)
 
 
-async def start_confirm(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start_confirm(user_input: Update | CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
     _screen_set(context, Screen.START_CONFIRM)
-    chat_id = msg_or_q.message.chat_id if hasattr(msg_or_q, "message") else msg_or_q.message.chat_id
+    chat_id = user_input.message.chat_id
 
     pid = context.chat_data["start_project_id"]
     name = context.chat_data["start_project_name"]
@@ -585,10 +585,7 @@ async def start_confirm(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
             [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
         ]
     )
-    if hasattr(msg_or_q, "message"):
-        await msg_or_q.message.reply_text(summary, reply_markup=kb)
-    else:
-        await msg_or_q.edit_message_text(summary, reply_markup=kb)
+    await _respond_to_input(user_input, summary, kb)
 
 
 async def start_finalize(q, context: ContextTypes.DEFAULT_TYPE, action: str) -> None:
@@ -796,8 +793,8 @@ async def edit_restart(q, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 # -------------------- status --------------------
 # TODO: break down bot statuses based on project
-async def status_show(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
-    chat_id = msg_or_q.message.chat_id if hasattr(msg_or_q, "message") else msg_or_q.message.chat_id
+async def status_show(user_input: Update | CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = user_input.message.chat_id
     running = MANAGER.running_count(chat_id)
     queued = len(MANAGER.queues.get(chat_id, []))
     lines = [
@@ -818,10 +815,7 @@ async def status_show(msg_or_q, context: ContextTypes.DEFAULT_TYPE) -> None:
             [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
         ]
     )
-    if hasattr(msg_or_q, "message"):
-        await msg_or_q.message.reply_text(text, reply_markup=kb)
-    else:
-        await msg_or_q.edit_message_text(text, reply_markup=kb)
+    await _respond_to_input(user_input, text, kb)
 
 
 # -------------------- settings --------------------
