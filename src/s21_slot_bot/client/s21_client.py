@@ -22,7 +22,7 @@ from s21_slot_bot.client.consts import (
     X_EDU_PRODUCT_ID,
     USER_ROLE,
 )
-from s21_slot_bot.client.errors import School21Error
+from s21_slot_bot.client.exceptions import School21Error
 from s21_slot_bot.client.models import Tokens, ContentType, Project, ProjectStatus
 from s21_slot_bot.client.queries import (
     Q_GET_MODULE,

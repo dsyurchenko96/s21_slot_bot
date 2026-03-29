@@ -2,7 +2,9 @@ import asyncio
 import enum
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, ConfigDict, AwareDatetime
+from pydantic import BaseModel, Field, ConfigDict, AwareDatetime, PositiveInt
+
+from s21_slot_bot.app.consts import MIN_REQUIRED_REVIEWS, MAX_REQUIRED_REVIEWS, MIN_INTERVAL_SEC
 
 
 class Lifecycle(StrEnum):
@@ -12,6 +14,20 @@ class Lifecycle(StrEnum):
     DONE = enum.auto()
 
 
+class FlowCategory(StrEnum):
+    START = enum.auto()
+    STOP = enum.auto()
+    EDIT = enum.auto()
+    STATUS = enum.auto()
+    SETTINGS = enum.auto()
+
+
+class Mode(StrEnum):
+    ONLY_FIND = enum.auto()
+    FIND_AND_BOOK = enum.auto()
+
+
+# TODO: separate into Action? rename?
 class Screen(StrEnum):
     MENU = enum.auto()
 
@@ -39,21 +55,22 @@ class Screen(StrEnum):
 
 class Stats(BaseModel):
     last_ping: AwareDatetime | None = None
-    attempts_total: int = 0
-    attempts_success: int = 0
-    attempts_failed: int = 0
-    currently_booked: int = 0
+    attempts_total: PositiveInt = 0
+    attempts_success: PositiveInt = 0
+    attempts_failed: PositiveInt = 0
+    currently_booked: PositiveInt = 0
 
 
 class BotConfig(BaseModel):
     bot_id: str
-    chat_id: int
-    project_id: int
+    # TODO: move chat_id to env
+    chat_id: PositiveInt
+    project_id: PositiveInt
     project_name: str
-    required_reviews: int
+    required_reviews: int = Field(ge=MIN_REQUIRED_REVIEWS, le=MAX_REQUIRED_REVIEWS)
     from_dt: AwareDatetime
     to_dt: AwareDatetime
-    interval_sec: int
+    interval_sec: int = Field(ge=MIN_INTERVAL_SEC)
     dry_run: bool
 
 
