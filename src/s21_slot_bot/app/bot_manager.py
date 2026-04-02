@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import secrets
 from datetime import datetime
 
@@ -7,9 +8,10 @@ from telegram.ext import Application
 from s21_slot_bot.app.config import BotConfig
 from s21_slot_bot.app.menu_markup import MAIN_MENU_KB
 from s21_slot_bot.app.models import BotInstance, Lifecycle
-from s21_slot_bot.client.config import S21ClientConfig
-from s21_slot_bot.client.exceptions import School21Error
 from s21_slot_bot.client.s21_client import School21Client, pick_candidate_start
+
+# TODO: add wrapper in BotInstance
+_logger = logging.getLogger(__name__)
 
 
 class BotManager:
@@ -100,7 +102,7 @@ class BotManager:
             if inst.state != Lifecycle.RUNNING:
                 return
 
-            if datetime.now(tz=MANAGER.config.timezone) >= cfg.to_dt:
+            if datetime.now(tz=self.config.timezone) >= cfg.to_dt:
                 inst.state = Lifecycle.DONE
                 await app.bot.send_message(
                     chat_id, f"⌛️ bot #{cfg.bot_id}: окно поиска истекло.", reply_markup=MAIN_MENU_KB
@@ -109,7 +111,7 @@ class BotManager:
                 return
 
             inst.stats.attempts_total += 1
-            inst.stats.last_ping = datetime.now(tz=MANAGER.config.timezone)
+            inst.stats.last_ping = datetime.now(tz=self.config.timezone)
 
             try:
                 slots, already_booked = self._s21_client.get_timeslots(task_id, cfg.from_dt, cfg.to_dt)
@@ -167,13 +169,9 @@ class BotManager:
                 await app.bot.send_message(chat_id, f"⛔ bot #{cfg.bot_id}: остановлен.", reply_markup=MAIN_MENU_KB)
                 await self.on_finished(inst, app)
                 return
-            except School21Error:
-                inst.stats.attempts_failed += 1
             except Exception:
+                _logger.exception("Failed to run boot loop")
                 inst.stats.attempts_failed += 1
 
             sleep_s = interval + (secrets.randbelow(self.config.jitter_sec + 1))
             await asyncio.sleep(sleep_s)
-
-
-MANAGER = BotManager(School21Client(S21ClientConfig()))

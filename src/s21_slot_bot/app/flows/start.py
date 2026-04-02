@@ -27,7 +27,7 @@ class StartFlowAction(StrEnum):
 
 
 class StartFlow(Flow):
-    ORDER: Final[tuple[StartFlowAction]] = tuple(*StartFlowAction)
+    ORDER: Final[tuple[StartFlowAction]] = tuple(StartFlowAction)
 
     def __init__(self, s21_client: School21Client, bot_manager: BotManager):
         super().__init__(s21_client, bot_manager)
@@ -81,66 +81,6 @@ class StartFlow(Flow):
         next_func = self.action_to_func[next_action]
         await next_func(query, context)
 
-        # if data.startswith("start:proj:"):
-        #     pid = data.split(":", 2)[2]
-        #     context.chat_data["start_project_id"] = pid
-        #     context.chat_data["start_project_name"] = context.chat_data.get("projects_map", {}).get(pid, pid)
-        #     await start_pick_num(q, context)
-        #     return
-        #
-        # if data.startswith("start:num:"):
-        #     n = int(data.split(":")[2])
-        #     context.chat_data["start_required_reviews"] = n
-        #     await start_pick_from(q, context)
-        #     return
-        #
-        # if data.startswith("start:from:"):
-        #     now = datetime.now(tz=MANAGER.config.timezone)
-        #     kind = data.split(":")[2]
-        #     if kind == "now":
-        #         context.chat_data["start_from"] = now
-        #         await start_pick_to(q, context)
-        #         return
-        #     if kind == "p30":
-        #         context.chat_data["start_from"] = now + timedelta(minutes=30)
-        #         await start_pick_to(q, context)
-        #         return
-        #     if kind == "p60":
-        #         context.chat_data["start_from"] = now + timedelta(hours=1)
-        #         await start_pick_to(q, context)
-        #         return
-        #     if kind == "custom":
-        #         _screen_set(context, Screen.START_WAIT_FROM)
-        #         await q.message.reply_text("введи start (ISO Z или YYYY-MM-DD HH:MM)", reply_markup=MAIN_MENU_KB)
-        #         return
-        #
-        # if data.startswith("start:to:"):
-        #     from_dt: datetime = context.chat_data["start_from"]
-        #     kind = data.split(":")[2]
-        #     if kind == "p120":
-        #         context.chat_data["start_to"] = from_dt + timedelta(hours=2)
-        #         await start_pick_mode(q, context)
-        #         return
-        #     if kind == "p240":
-        #         context.chat_data["start_to"] = from_dt + timedelta(hours=4)
-        #         await start_pick_mode(q, context)
-        #         return
-        #     if kind == "custom":
-        #         _screen_set(context, Screen.START_WAIT_TO)
-        #         await q.message.reply_text("введи end (тот же формат)", reply_markup=MAIN_MENU_KB)
-        #         return
-        #
-        # if data.startswith("start:mode:"):
-        #     mode = data.split(":")[2]
-        #     context.chat_data["start_dry_run"] = mode == "dry"
-        #     await start_confirm(q, context)
-        #     return
-        #
-        # if data.startswith("start:confirm:"):
-        #     action = data.split(":")[2]
-        #     await start_finalize(q, context, action)
-        #     return
-
     async def pick_projects(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         self._screen_set(context, Screen.START_PICK_PROJECT)
         try:
@@ -192,7 +132,6 @@ class StartFlow(Flow):
                         "3", callback_data=f"{FlowCategory.START}:{StartFlowAction.PICK_NUM_REVIEWS}:3"
                     ),
                 ],
-                # [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
             ]
         )
         message = "сколько проверок нужно (1–3)?"
@@ -217,7 +156,6 @@ class StartFlow(Flow):
                 #         "ввести вручную", callback_data=f"{FlowCategory.START}:{StartFlowAction.PICK_FROM}:custom"
                 #     )
                 # ],
-                # [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
             ]
         )
         message = "выбери start (по умолчанию сейчас):"
@@ -241,7 +179,6 @@ class StartFlow(Flow):
                 ],
                 # TODO: get custom time without extra prompt
                 # [InlineKeyboardButton("ввести вручную", callback_data=f"{FlowCategory.START}:to:custom")],
-                # [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
             ]
         )
         message = "выбери end (по умолчанию +2ч от start):"
@@ -271,7 +208,6 @@ class StartFlow(Flow):
                         callback_data=f"{FlowCategory.START}:{StartFlowAction.PICK_MODE}:{Mode.FIND_AND_BOOK}",
                     )
                 ],
-                # [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
             ]
         )
         message = "выбери режим:"
@@ -299,7 +235,6 @@ class StartFlow(Flow):
             [
                 [InlineKeyboardButton("🚀 старт", callback_data=f"{FlowCategory.START}:{StartFlowAction.CONFIRM}")],
                 # [InlineKeyboardButton("➕ в очередь", callback_data=f"{FlowCategory.START}:confirm:queue")],
-                # [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
             ]
         )
         await self._respond_to_input(user_input, summary, kb)

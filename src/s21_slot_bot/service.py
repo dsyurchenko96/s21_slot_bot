@@ -29,6 +29,7 @@ class SlotBotService:
         app.add_handler(CommandHandler("start", input_handler.cmd_start))
         app.add_handler(CallbackQueryHandler(input_handler.on_cb))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, input_handler.on_text))
+        # TODO: add error handler
         return app
 
     def start(self):
