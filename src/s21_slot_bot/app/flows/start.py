@@ -1,4 +1,5 @@
 import enum
+import logging
 import secrets
 from datetime import datetime
 from enum import StrEnum
@@ -14,6 +15,9 @@ from s21_slot_bot.app.menu_markup import MAIN_MENU_KB
 from s21_slot_bot.app.models import Screen, BotConfig, BotInstance, FlowCategory, Mode
 from s21_slot_bot.client.s21_client import School21Client
 from s21_slot_bot.common.time import str_to_dt, dt_to_pretty, str_to_dt_with_from
+
+# TODO: wrap
+_logger = logging.getLogger(__name__)
 
 
 class StartFlowAction(StrEnum):
@@ -84,7 +88,8 @@ class StartFlow(Flow):
     async def pick_projects(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         self._screen_set(context, Screen.START_PICK_PROJECT)
         try:
-            projects = self._s21_client.get_reviewed_projects(self._s21_client.user_id)
+            user_id = self._s21_client.get_user_id(_logger)
+            projects = self._s21_client.get_reviewed_projects(user_id, _logger)
         except Exception as e:
             await update.message.reply_text(f"❌ не смог получить проекты: {e}", reply_markup=MAIN_MENU_KB)
             return

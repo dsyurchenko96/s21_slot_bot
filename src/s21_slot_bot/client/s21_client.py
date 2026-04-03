@@ -1,6 +1,5 @@
 import html
 import json
-import logging
 import re
 import time
 import uuid
@@ -32,9 +31,8 @@ from s21_slot_bot.client.queries import (
     Q_GET_USER,
     Q_GET_LOCAL_COURSE_GOALS,
 )
+from s21_slot_bot.common.logger import LoggerLike
 from s21_slot_bot.common.time import dt_to_pretty
-
-logger = logging.getLogger(__name__)
 
 
 class School21Client:
@@ -46,12 +44,6 @@ class School21Client:
         self._sess = requests.Session()
         self._tokens: Tokens | None = None
         self._user_id: str | None = None
-
-    @property
-    def user_id(self) -> str:
-        if not self._user_id:
-            self._user_id = self.get_user_id()
-        return self._user_id
 
     @property
     def _token_endpoint(self) -> str:
@@ -72,7 +64,8 @@ class School21Client:
             f"&nonce={nonce}"
         )
 
-    def login(self) -> None:
+    def login(self, logger: LoggerLike) -> None:
+        logger.info("Logging in")
         auth_resp = self._sess.get(self._auth_endpoint, timeout=self._timeout_sec)
         auth_resp.raise_for_status()
 
@@ -104,22 +97,31 @@ class School21Client:
 
         self._set_tokens_from_payload(payload)
 
-    def get_user_id(self) -> str:
-        data = self._graphql("getCurrentUser", Q_GET_USER, {})
-        try:
-            return data["user"]["getCurrentUser"]["id"]
-        except Exception as e:
-            raise self._formatted_error("не смог распарсить getCurrentUser", e, data)
+    def get_user_id(self, logger: LoggerLike) -> str:
+        if self._user_id:
+            return self._user_id
 
-    def get_reviewed_projects(self, user_id: str) -> list[Project]:
-        data = self._graphql("getStudentCurrentProjects", Q_GET_CUR_PROJECTS, {"userId": user_id})
+        operation_name = "getCurrentUser"
+        data = self._graphql(operation_name, Q_GET_USER, {}, logger)
         try:
-            projects = data["student"]["getStudentCurrentProjects"]
+            user_id = data["user"][operation_name]["id"]
+            self._user_id = user_id
+            logger.info("User ID is `%s`", user_id)
+            return user_id
+        except Exception as e:
+            raise self._formatted_error(operation_name, e, data)
+
+    def get_reviewed_projects(self, user_id: str, logger: LoggerLike) -> list[Project]:
+        operation_name = "getStudentCurrentProjects"
+        data = self._graphql(operation_name, Q_GET_CUR_PROJECTS, {"userId": user_id}, logger)
+        try:
+            projects: list[dict[str, Any]] = data["student"][operation_name]
             reviewed_projects = []
+            logger.info("Processing %d projects in review", len(projects))
             for project_dict in projects:
                 project = Project(**project_dict)
                 if project.status == ProjectStatus.IN_PROGRESS and project.course_id:
-                    course_projects = self.get_local_course_goals(project.course_id)
+                    course_projects = self.get_local_course_goals(project.course_id, logger)
                     course_reviewed_projects = list(
                         filter(lambda p: p.status == ProjectStatus.P2P_EVALUATIONS, course_projects)
                     )
@@ -127,51 +129,65 @@ class School21Client:
                     continue
                 if project.status == ProjectStatus.P2P_EVALUATIONS:
                     reviewed_projects.append(project)
+            logger.info("Currently reviewed projects: %s", [project.name for project in reviewed_projects] or "None")
             return reviewed_projects
         except Exception as e:
-            raise self._formatted_error("не смог распарсить getStudentCurrentProjects", e, data)
+            raise self._formatted_error(operation_name, e, data)
 
-    def get_local_course_goals(self, course_id: int) -> list[Project]:
-        data = self._graphql("getLocalCourseGoals", Q_GET_LOCAL_COURSE_GOALS, {"localCourseId": str(course_id)})
+    def get_local_course_goals(self, course_id: int, logger: LoggerLike) -> list[Project]:
+        operation_name = "getLocalCourseGoals"
+        data = self._graphql(operation_name, Q_GET_LOCAL_COURSE_GOALS, {"localCourseId": str(course_id)}, logger)
         try:
-            course_goals: list[dict] = data["course"]["getLocalCourseGoals"]["localCourseGoals"]
+            course_goals: list[dict] = data["course"][operation_name]["localCourseGoals"]
             course_projects = [Project(**goal) for goal in course_goals]
+            logger.info(
+                "Local course projects for course_id `%s`: %s",
+                course_id,
+                [project.name for project in course_projects] or "None",
+            )
             return course_projects
         except Exception as e:
-            raise self._formatted_error("не смог распарсить getLocalCourseGoals", e, data)
+            raise self._formatted_error(operation_name, e, data)
 
-    def get_task_and_answer(self, module_id: str) -> tuple[str, str]:
-        data = self._graphql("calendarGetModule", Q_GET_MODULE, {"moduleId": module_id})
+    def get_task_and_answer(self, module_id: int, logger: LoggerLike) -> tuple[str, str]:
+        operation_name = "calendarGetModule"
+        data = self._graphql(operation_name, Q_GET_MODULE, {"moduleId": module_id}, logger)
         try:
             cur = data["student"]["getModuleById"]["currentTask"]
-            return cur["taskId"], cur["lastAnswer"]["id"]
+            task_id, answer_id = cur["taskId"], cur["lastAnswer"]["id"]
+            logger.info("Received task_id `%s` and answer_id `%s`", task_id, answer_id)
+            return task_id, answer_id
         except Exception as e:
-            raise self._formatted_error("не смог распарсить calendarGetModule", e, data)
+            raise self._formatted_error(operation_name, e, data)
 
-    def get_timeslots(self, task_id: str, from_dt: datetime, to_dt: datetime) -> tuple[list[dict[str, Any]], int]:
+    def get_timeslots(
+        self, task_id: str, from_dt: datetime, to_dt: datetime, logger: LoggerLike
+    ) -> tuple[list[dict[str, Any]], int]:
         from_iso_z, to_iso_z = dt_to_pretty(from_dt), dt_to_pretty(to_dt)
+        operation_name = "calendarGetNameLessStudentTimeslotsForReview"
         data = self._graphql(
-            "calendarGetNameLessStudentTimeslotsForReview",
-            Q_GET_SLOTS,
-            {"taskId": task_id, "from": from_iso_z, "to": to_iso_z},
+            operation_name, Q_GET_SLOTS, {"taskId": task_id, "from": from_iso_z, "to": to_iso_z}, logger
         )
         try:
             review_data = data["student"]["getNameLessStudentTimeslotsForReview"]
             timeslots = review_data.get("timeSlots") or []
             booked = int(review_data["projectReviewsInfo"]["relevantReviewByStudentsCount"])
+            logger.info("Received %d slots, %d booked", len(timeslots), booked)
             return timeslots, booked
         except Exception as e:
-            raise self._formatted_error("не смог распарсить calendarGetNameLessStudentTimeslotsForReview", e, data)
+            raise self._formatted_error(operation_name, e, data)
 
     def book(
         self,
         answer_id: str,
         start_time_iso_z: str,
         staff_slot: bool,
+        logger: LoggerLike,
         is_online: bool = True,
     ) -> str:
+        operation_name = "calendarAddBookingToEventSlot"
         data = self._graphql(
-            "calendarAddBookingToEventSlot",
+            operation_name,
             Q_BOOK,
             {
                 "answerId": answer_id,
@@ -179,14 +195,20 @@ class School21Client:
                 "wasStaffSlotChosen": staff_slot,
                 "isOnline": is_online,
             },
+            logger,
         )
         try:
-            return data["student"]["addBookingP2PToEventSlot"]["id"]
+            booking_id = data["student"]["addBookingP2PToEventSlot"]["id"]
+            logger.info("Successfully booked a review, id `%s`", booking_id)
+            return booking_id
         except Exception as e:
-            raise self._formatted_error("не смог распарсить calendarAddBookingToEventSlot", e, data)
+            raise self._formatted_error(operation_name, e, data)
 
-    def _graphql(self, operation_name: str, query: str, variables: dict[str, Any]) -> dict[str, Any]:
-        self._refresh_if_needed()
+    def _graphql(
+        self, operation_name: str, query: str, variables: dict[str, Any], logger: LoggerLike
+    ) -> dict[str, Any]:
+        logger.info("Calling `%s` with variables `%s`", operation_name, variables)
+        self._refresh_if_needed(logger)
         assert self._tokens is not None
 
         headers = {
@@ -212,7 +234,7 @@ class School21Client:
         )
 
         if resp.status_code in {HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN}:
-            self.login()
+            self.login(logger)
             resp = self._sess.post(
                 GRAPHQL_URL,
                 json={
@@ -226,15 +248,16 @@ class School21Client:
 
         resp.raise_for_status()
         data = resp.json()
+        logger.debug("Received response from operation `%s`: %s", operation_name, data)
 
         if data.get("errors"):
             raise School21Error(f"graphql errors: {data['errors']}")
 
         return data.get("data", {})
 
-    def _refresh_if_needed(self) -> None:
+    def _refresh_if_needed(self, logger: LoggerLike) -> None:
         if not self._tokens or not self._tokens.refresh_token:
-            self.login()
+            self.login(logger)
             return
         if time.time() < self._tokens.expires_at_epoch:
             return
@@ -250,7 +273,8 @@ class School21Client:
             timeout=self._timeout_sec,
         )
         if not resp.ok:
-            self.login()
+            logger.warning("Failed to login with status %d, trying again...", resp.status_code)
+            self.login(logger)
             return
 
         payload = resp.json()
@@ -292,9 +316,9 @@ class School21Client:
                 return code
         return None
 
-    def _formatted_error(self, error_message: str, error: Exception, data: dict[str, Any]) -> School21Error:
+    def _formatted_error(self, operation_name: str, error: Exception, data: dict[str, Any]) -> School21Error:
         return School21Error(
-            f"{error_message}:\n\nError: {error}\n\nData:\n{json.dumps(data, ensure_ascii=False, indent=4)}"
+            f"Couldn't parse {operation_name}:\n\nError: {error}\n\nData:\n{json.dumps(data, ensure_ascii=False, indent=4)}"
         )
 
 

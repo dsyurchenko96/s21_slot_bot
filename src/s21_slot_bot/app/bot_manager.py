@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import secrets
 from datetime import datetime
 
@@ -9,9 +8,6 @@ from s21_slot_bot.app.config import BotConfig
 from s21_slot_bot.app.menu_markup import MAIN_MENU_KB
 from s21_slot_bot.app.models import BotInstance, Lifecycle
 from s21_slot_bot.client.s21_client import School21Client, pick_candidate_start
-
-# TODO: add wrapper in BotInstance
-_logger = logging.getLogger(__name__)
 
 
 class BotManager:
@@ -87,9 +83,10 @@ class BotManager:
         chat_id = inst.cfg.chat_id
         cfg = inst.cfg
         interval = cfg.interval_sec
+        logger = inst.logger()
 
         try:
-            task_id, answer_id = self._s21_client.get_task_and_answer(cfg.project_id)
+            task_id, answer_id = self._s21_client.get_task_and_answer(cfg.project_id, logger)
         except Exception as e:
             inst.state = Lifecycle.STOPPED
             await app.bot.send_message(
@@ -104,6 +101,7 @@ class BotManager:
 
             if datetime.now(tz=self.config.timezone) >= cfg.to_dt:
                 inst.state = Lifecycle.DONE
+                logger.info("Stopping the current bot search due to expiration")
                 await app.bot.send_message(
                     chat_id, f"⌛️ bot #{cfg.bot_id}: окно поиска истекло.", reply_markup=MAIN_MENU_KB
                 )
@@ -114,7 +112,7 @@ class BotManager:
             inst.stats.last_ping = datetime.now(tz=self.config.timezone)
 
             try:
-                slots, already_booked = self._s21_client.get_timeslots(task_id, cfg.from_dt, cfg.to_dt)
+                slots, already_booked = self._s21_client.get_timeslots(task_id, cfg.from_dt, cfg.to_dt, inst.logger())
                 currently_booked = inst.stats.currently_booked
                 inst.stats.currently_booked = already_booked
                 missing = cfg.required_reviews - int(already_booked)
@@ -149,10 +147,12 @@ class BotManager:
                             return
 
                         # booking mode: book one slot and continue until enough
-                        booking_id = self._s21_client.book(
-                            answer_id=answer_id, start_time_iso_z=start_time, staff_slot=staff_slot
+                        self._s21_client.book(
+                            answer_id=answer_id,
+                            start_time_iso_z=start_time,
+                            staff_slot=staff_slot,
+                            logger=inst.logger(),
                         )
-                        # TODO: add logging for booking_id?
                         currently_booked = already_booked + 1
                         inst.stats.currently_booked = currently_booked
                         inst.stats.attempts_success += 1
@@ -170,7 +170,7 @@ class BotManager:
                 await self.on_finished(inst, app)
                 return
             except Exception:
-                _logger.exception("Failed to run boot loop")
+                logger.exception("Failed to run boot loop")
                 inst.stats.attempts_failed += 1
 
             sleep_s = interval + (secrets.randbelow(self.config.jitter_sec + 1))
