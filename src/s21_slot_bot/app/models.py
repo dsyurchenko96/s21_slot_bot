@@ -1,10 +1,12 @@
 import asyncio
 import enum
+import logging
 from enum import StrEnum
 
 from pydantic import BaseModel, Field, ConfigDict, AwareDatetime, PositiveInt
 
 from s21_slot_bot.app.consts import MIN_REQUIRED_REVIEWS, MAX_REQUIRED_REVIEWS, MIN_INTERVAL_SEC
+from s21_slot_bot.common.logger import LoggerAdapterID
 
 
 class Lifecycle(StrEnum):
@@ -81,3 +83,8 @@ class BotInstance(BaseModel):
     task: asyncio.Task | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    def logger(self) -> LoggerAdapterID:
+        logger = logging.getLogger(__name__)
+        adapter = LoggerAdapterID(logger, {"id": self.cfg.bot_id})
+        return adapter

@@ -29,7 +29,6 @@ class StatusFlow(Flow):
             case _:
                 raise InvalidCallbackData
 
-
     # TODO: break down bot statuses based on project
     async def status_show(self, user_input: Update | CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
         chat_id = user_input.message.chat_id
