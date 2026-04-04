@@ -10,10 +10,8 @@ from s21_slot_bot.common.logger import LoggerAdapterID
 
 
 class Lifecycle(StrEnum):
-    QUEUED = enum.auto()
     RUNNING = enum.auto()
     STOPPED = enum.auto()
-    DONE = enum.auto()
 
 
 class FlowCategory(StrEnum):
@@ -78,7 +76,7 @@ class BotConfig(BaseModel):
 
 class BotInstance(BaseModel):
     cfg: BotConfig
-    state: Lifecycle = Lifecycle.QUEUED
+    state: Lifecycle = Lifecycle.STOPPED
     stats: Stats = Field(default_factory=Stats)
     task: asyncio.Task | None = None
 

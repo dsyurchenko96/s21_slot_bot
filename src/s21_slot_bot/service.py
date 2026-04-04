@@ -16,7 +16,9 @@ class SlotBotService:
         tg_app_builder: type[ApplicationBuilder] = ApplicationBuilder,
     ):
         self._s21_client = s21_client_factory(config=config.s21)
-        self._bot_manager = bot_manager_factory(config=config.bot, s21_client=self._s21_client)
+        self._bot_manager = bot_manager_factory(
+            bot_config=config.bot, s21_config=config.s21, s21_client_factory=s21_client_factory
+        )
         self._input_handler = input_handler_factory(s21_client=self._s21_client, bot_manager=self._bot_manager)
         self._tg_app = self._build_tg_app(
             tg_app_builder=tg_app_builder, token=config.tg_token.get_secret_value(), input_handler=self._input_handler

@@ -42,7 +42,7 @@ class EditFlow(Flow):
                 await query.message.reply_text("введи новый интервал (сек)", reply_markup=MAIN_MENU_KB)
             case EditFlowAction.TOGGLE_DRY:
                 bot_id = context.chat_data.get("edit_bot_id")
-                inst = self._bot_manager.bots.get(bot_id) if bot_id else None
+                inst = self._bot_manager.get_bot(bot_id)
                 if inst:
                     inst.cfg.dry_run = not inst.cfg.dry_run
                 await self.edit_menu(query, context)
@@ -54,7 +54,7 @@ class EditFlow(Flow):
     async def edit_pick(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         self._screen_set(context, Screen.EDIT_PICK)
         chat_id = update.message.chat_id
-        bots = [b for b in self._bot_manager.list_all(chat_id) if b.state in (Lifecycle.RUNNING, Lifecycle.QUEUED)]
+        bots = self._bot_manager.running(chat_id)
         if not bots:
             await update.message.reply_text("нет активных ботов для изменения", reply_markup=MAIN_MENU_KB)
             return
@@ -67,15 +67,14 @@ class EditFlow(Flow):
             ]
             for b in bots[:20]
         ]
-        # kb.append([InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")])
         await update.message.reply_text("выбери бота:", reply_markup=InlineKeyboardMarkup(kb))
 
     async def edit_menu(self, q, context: ContextTypes.DEFAULT_TYPE) -> None:
         self._screen_set(context, Screen.EDIT_MENU)
         bot_id = context.chat_data.get("edit_bot_id")
-        inst = self._bot_manager.bots.get(bot_id) if bot_id else None
+        inst = self._bot_manager.get_bot(bot_id)
         if not inst:
-            await q.message.reply_text("не нашёл бота", reply_markup=MAIN_MENU_KB)
+            await q.message.reply_text(f"не нашёл бота #{bot_id}", reply_markup=MAIN_MENU_KB)
             return
         c = inst.cfg
         text = (
@@ -101,20 +100,19 @@ class EditFlow(Flow):
                     ),
                 ],
                 [InlineKeyboardButton("перезапустить", callback_data=f"{FlowCategory.EDIT}:{EditFlowAction.RESTART}")],
-                # [InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")],
             ]
         )
         await q.message.reply_text(text, reply_markup=kb)
 
     async def edit_custom_from(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         bot_id = context.chat_data.get("edit_bot_id")
-        inst = self._bot_manager.bots.get(bot_id) if bot_id else None
+        inst = self._bot_manager.get_bot(bot_id)
         if not inst:
-            await update.message.reply_text("не нашёл бота", reply_markup=MAIN_MENU_KB)
+            await update.message.reply_text(f"не нашёл бота #{bot_id}", reply_markup=MAIN_MENU_KB)
             self._screen_set(context, Screen.MENU)
             return
         try:
-            inst.cfg.from_dt = str_to_dt(update.message.text, self._bot_manager.config.timezone)
+            inst.cfg.from_dt = str_to_dt(update.message.text, self._bot_manager.bot_config.timezone)
         except Exception as e:
             await update.message.reply_text(f"❌ {e}", reply_markup=MAIN_MENU_KB)
             return
@@ -123,13 +121,13 @@ class EditFlow(Flow):
 
     async def edit_custom_to(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         bot_id = context.chat_data.get("edit_bot_id")
-        inst = self._bot_manager.bots.get(bot_id) if bot_id else None
+        inst = self._bot_manager.get_bot(bot_id)
         if not inst:
-            await update.message.reply_text("не нашёл бота", reply_markup=MAIN_MENU_KB)
+            await update.message.reply_text(f"не нашёл бота {bot_id}", reply_markup=MAIN_MENU_KB)
             self._screen_set(context, Screen.MENU)
             return
         try:
-            inst.cfg.to_dt = str_to_dt(update.message.text, self._bot_manager.config.timezone)
+            inst.cfg.to_dt = str_to_dt(update.message.text, self._bot_manager.bot_config.timezone)
         except Exception as e:
             await update.message.reply_text(f"❌ {e}", reply_markup=MAIN_MENU_KB)
             return
@@ -138,9 +136,9 @@ class EditFlow(Flow):
 
     async def edit_custom_interval(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         bot_id = context.chat_data.get("edit_bot_id")
-        inst = self._bot_manager.bots.get(bot_id) if bot_id else None
+        inst = self._bot_manager.get_bot(bot_id)
         if not inst:
-            await update.message.reply_text("не нашёл бота", reply_markup=MAIN_MENU_KB)
+            await update.message.reply_text(f"не нашёл бота #{bot_id}", reply_markup=MAIN_MENU_KB)
             self._screen_set(context, Screen.MENU)
             return
         try:
@@ -157,15 +155,19 @@ class EditFlow(Flow):
     async def edit_restart(self, q, context: ContextTypes.DEFAULT_TYPE) -> None:
         chat_id = q.message.chat_id
         bot_id = context.chat_data.get("edit_bot_id")
-        inst = self._bot_manager.bots.get(bot_id) if bot_id else None
+        inst = self._bot_manager.get_bot(bot_id)
         if not inst:
-            await q.message.reply_text("не нашёл бота", reply_markup=MAIN_MENU_KB)
+            await q.message.reply_text(f"не нашёл бота #{bot_id}", reply_markup=MAIN_MENU_KB)
             return
         if inst.state == Lifecycle.RUNNING:
-            self._bot_manager.stop_bot(bot_id)
-            inst.state = Lifecycle.QUEUED
-            self._bot_manager.queues.setdefault(chat_id, []).append(bot_id)
-            await q.message.reply_text("🔄 поставил в очередь (перезапуск)", reply_markup=MAIN_MENU_KB)
-            await self._bot_manager.try_start_next(chat_id, context.application)
-        else:
-            await q.message.reply_text("бот не running", reply_markup=MAIN_MENU_KB)
+            await q.message.reply_text(f"бот #{bot_id} уже активен", reply_markup=MAIN_MENU_KB)
+            return
+        if self._bot_manager.running_count(chat_id) >= self._bot_manager.bot_config.max_bots:
+            await q.message.reply_text(
+                f"Максимальное количество ботов превышено ({self._bot_manager.bot_config.max_bots}) - останови/удали имеющихся или поменяй максимальное количество",
+                reply_markup=MAIN_MENU_KB,
+            )
+            return
+
+        await q.message.reply_text(f"🔄 Перезапускаю бота #{bot_id}", reply_markup=MAIN_MENU_KB)
+        await self._bot_manager.start_bot(inst, context.application)

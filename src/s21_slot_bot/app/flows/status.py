@@ -8,9 +8,10 @@ from telegram.ext import ContextTypes
 
 from s21_slot_bot.app.exceptions import InvalidCallbackData
 from s21_slot_bot.app.flows.base import Flow
-from s21_slot_bot.app.models import Lifecycle, BotInstance, FlowCategory
+from s21_slot_bot.app.models import BotInstance, FlowCategory
 from s21_slot_bot.common.time import dt_to_pretty
 
+# TODO: wrap
 _logger = logging.getLogger(__name__)
 
 
@@ -33,18 +34,16 @@ class StatusFlow(Flow):
     async def status_show(self, user_input: Update | CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
         chat_id = user_input.message.chat_id
         running = self._bot_manager.running_count(chat_id)
-        queued = len(self._bot_manager.queues.get(chat_id, []))
         lines = [
-            f"📌 статус\nrunning: {running}\nqueued: {queued}\n"
-            f"max: {self._bot_manager.config.max_bots}\ninterval: {self._bot_manager.config.poll_interval_sec}s\n"
+            f"📌 статус\nrunning: {running}\n"
+            f"max: {self._bot_manager.bot_config.max_bots}\ninterval: {self._bot_manager.bot_config.poll_interval_sec}s\n"
         ]
         bots = self._bot_manager.list_all(chat_id)
         if not bots:
             lines.append("ботов нет")
         else:
             for b in bots:
-                if b.state != Lifecycle.DONE:
-                    lines.append(self._bot_line(b))
+                lines.append(self._bot_line(b))
         text = "\n".join(lines).strip()
         kb = InlineKeyboardMarkup(
             [

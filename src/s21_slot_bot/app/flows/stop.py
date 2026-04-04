@@ -7,7 +7,7 @@ from telegram.ext import ContextTypes
 from s21_slot_bot.app.exceptions import InvalidCallbackData
 from s21_slot_bot.app.flows.base import Flow
 from s21_slot_bot.app.menu_markup import MAIN_MENU_KB
-from s21_slot_bot.app.models import Screen, Lifecycle, FlowCategory
+from s21_slot_bot.app.models import Screen, FlowCategory
 
 
 class StopFlowAction(StrEnum):
@@ -37,7 +37,7 @@ class StopFlow(Flow):
     async def stop_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         self._screen_set(context, Screen.STOP_MENU)
         chat_id = update.message.chat_id
-        if not self._bot_manager.running(chat_id) and not self._bot_manager.queued(chat_id):
+        if not self._bot_manager.running(chat_id):
             await update.message.reply_text("нет активных ботов", reply_markup=MAIN_MENU_KB)
             return
         kb = InlineKeyboardMarkup(
@@ -52,14 +52,13 @@ class StopFlow(Flow):
                         "🛑 остановить одного", callback_data=f"{FlowCategory.STOP}:{StopFlowAction.STOP_PICK_ONE}"
                     )
                 ],
-                # [InlineKeyboardButton("☑️ выбрать несколько", callback_data="stop:multi")],
             ]
         )
         await update.message.reply_text("остановить ботов:", reply_markup=kb)
 
     async def stop_pick_one(self, q, context: ContextTypes.DEFAULT_TYPE) -> None:
         chat_id = q.message.chat_id
-        bots = [b for b in self._bot_manager.list_all(chat_id) if b.state in (Lifecycle.RUNNING, Lifecycle.QUEUED)]
+        bots = self._bot_manager.running(chat_id)
         kb = [
             [
                 InlineKeyboardButton(

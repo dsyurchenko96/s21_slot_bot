@@ -63,13 +63,13 @@ class StartFlow(Flow):
                 num_reviews = int(callback_data.pop())
                 context.chat_data["start_required_reviews"] = num_reviews
             case StartFlowAction.PICK_FROM:
-                now = datetime.now(tz=self._bot_manager.config.timezone)
+                now = datetime.now(tz=self._bot_manager.bot_config.timezone)
                 # TODO: add support for custom time input
-                from_choice = str_to_dt_with_from(callback_data.pop(), self._bot_manager.config.timezone, now)
+                from_choice = str_to_dt_with_from(callback_data.pop(), self._bot_manager.bot_config.timezone, now)
                 context.chat_data["start_from"] = from_choice
             case StartFlowAction.PICK_TO:
                 from_dt: datetime = context.chat_data["start_from"]
-                to_choice = str_to_dt_with_from(callback_data.pop(), self._bot_manager.config.timezone, from_dt)
+                to_choice = str_to_dt_with_from(callback_data.pop(), self._bot_manager.bot_config.timezone, from_dt)
                 context.chat_data["start_to"] = to_choice
             case StartFlowAction.PICK_MODE:
                 mode = Mode(callback_data.pop())
@@ -86,6 +86,14 @@ class StartFlow(Flow):
         await next_func(query, context)
 
     async def pick_projects(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        chat_id = update.message.chat_id
+        if self._bot_manager.running_count(chat_id) >= self._bot_manager.bot_config.max_bots:
+            await update.message.reply_text(
+                f"Максимальное количество ботов превышено ({self._bot_manager.bot_config.max_bots}) - останови/удали имеющихся или поменяй количество ",
+                reply_markup=MAIN_MENU_KB,
+            )
+            return
+
         self._screen_set(context, Screen.START_PICK_PROJECT)
         try:
             user_id = self._s21_client.get_user_id(_logger)
@@ -119,7 +127,6 @@ class StartFlow(Flow):
             ]
             for project in projects[:20]
         ]
-        # kb.append([InlineKeyboardButton("⬅️ меню", callback_data="nav:menu")])
         await update.message.reply_text("выбери проект:", reply_markup=InlineKeyboardMarkup(kb))
 
     async def pick_num_reviews(self, user_input: Update | CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -168,7 +175,7 @@ class StartFlow(Flow):
 
     async def custom_from(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
-            context.chat_data["start_from"] = str_to_dt(update.message.text, self._bot_manager.config.timezone)
+            context.chat_data["start_from"] = str_to_dt(update.message.text, self._bot_manager.bot_config.timezone)
         except Exception as e:
             await update.message.reply_text(f"❌ {e}\nпопробуй ещё раз", reply_markup=MAIN_MENU_KB)
             return
@@ -191,7 +198,7 @@ class StartFlow(Flow):
 
     async def custom_to(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
-            context.chat_data["start_to"] = str_to_dt(update.message.text, self._bot_manager.config.timezone)
+            context.chat_data["start_to"] = str_to_dt(update.message.text, self._bot_manager.bot_config.timezone)
         except Exception as e:
             await update.message.reply_text(f"❌ {e}\nпопробуй ещё раз", reply_markup=MAIN_MENU_KB)
             return
@@ -234,12 +241,11 @@ class StartFlow(Flow):
             f"нужно проверок: {n}\n"
             f"окно: {dt_to_pretty(frm)} → {dt_to_pretty(to)}\n"
             f"режим: {'dry-run' if dry else 'booking'}\n\n"
-            f"активных: {self._bot_manager.active_count(chat_id)} / max {self._bot_manager.config.max_bots}"
+            f"активных: {self._bot_manager.running_count(chat_id)} / max {self._bot_manager.bot_config.max_bots}"
         )
         kb = InlineKeyboardMarkup(
             [
                 [InlineKeyboardButton("🚀 старт", callback_data=f"{FlowCategory.START}:{StartFlowAction.CONFIRM}")],
-                # [InlineKeyboardButton("➕ в очередь", callback_data=f"{FlowCategory.START}:confirm:queue")],
             ]
         )
         await self._respond_to_input(user_input, summary, kb)
@@ -247,6 +253,12 @@ class StartFlow(Flow):
     # TODO: figure out the q type (assert message / pass message?)
     async def finalize(self, q: CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
         chat_id = q.message.chat_id
+        if self._bot_manager.running_count(chat_id) >= self._bot_manager.bot_config.max_bots:
+            await q.message.reply_text(
+                f"Максимальное количество ботов превышено ({self._bot_manager.bot_config.max_bots}) - останови/удали имеющихся или поменяй количество ",
+                reply_markup=MAIN_MENU_KB,
+            )
+            return
 
         pid = context.chat_data["start_project_id"]
         name = context.chat_data["start_project_name"]
@@ -264,20 +276,13 @@ class StartFlow(Flow):
             required_reviews=n,
             from_dt=frm,
             to_dt=to,
-            interval_sec=self._bot_manager.config.poll_interval_sec,
+            interval_sec=self._bot_manager.bot_config.poll_interval_sec,
             dry_run=dry,
         )
-        inst = BotInstance(cfg=cfg)
-        self._bot_manager.add_bot(inst)
 
-        if self._bot_manager.running_count(chat_id) < self._bot_manager.config.max_bots:
-            await q.message.reply_text(f"✅ добавил bot #{bot_id} и запускаю", reply_markup=MAIN_MENU_KB)
-            await self._bot_manager.try_start_next(chat_id, context.application)
-            return
-        await q.message.reply_text(
-            f"Максимальное количество ботов превышено ({self._bot_manager.config.max_bots}) - останови/удали имеющихся или поменяй количество ",
-            reply_markup=MAIN_MENU_KB,
-        )
+        inst = BotInstance(cfg=cfg)
+        await q.message.reply_text(f"✅ Запускаю бота #{bot_id}", reply_markup=MAIN_MENU_KB)
+        await self._bot_manager.start_bot(inst, context.application)
 
         # TODO: check if it works without setting menu screen
         # self._screen_set(context, Screen.MENU)
