@@ -32,7 +32,7 @@ from s21_slot_bot.client.queries import (
     Q_GET_LOCAL_COURSE_GOALS,
 )
 from s21_slot_bot.common.logger import LoggerLike
-from s21_slot_bot.common.time import dt_to_pretty
+from s21_slot_bot.common.time import dt_to_isoz
 
 
 class School21Client:
@@ -163,7 +163,7 @@ class School21Client:
     def get_timeslots(
         self, task_id: str, from_dt: datetime, to_dt: datetime, logger: LoggerLike
     ) -> tuple[list[dict[str, Any]], int]:
-        from_iso_z, to_iso_z = dt_to_pretty(from_dt), dt_to_pretty(to_dt)
+        from_iso_z, to_iso_z = dt_to_isoz(from_dt), dt_to_isoz(to_dt)
         operation_name = "calendarGetNameLessStudentTimeslotsForReview"
         data = self._graphql(
             operation_name, Q_GET_SLOTS, {"taskId": task_id, "from": from_iso_z, "to": to_iso_z}, logger

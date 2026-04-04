@@ -282,7 +282,7 @@ class StartFlow(Flow):
 
         inst = BotInstance(cfg=cfg)
         await q.message.reply_text(f"✅ Запускаю бота #{bot_id}", reply_markup=MAIN_MENU_KB)
-        await self._bot_manager.start_bot(inst, context.application)
+        self._bot_manager.start_bot(inst, context.application)
 
         # TODO: check if it works without setting menu screen
         # self._screen_set(context, Screen.MENU)

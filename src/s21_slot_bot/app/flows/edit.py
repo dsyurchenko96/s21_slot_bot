@@ -170,4 +170,4 @@ class EditFlow(Flow):
             return
 
         await q.message.reply_text(f"🔄 Перезапускаю бота #{bot_id}", reply_markup=MAIN_MENU_KB)
-        await self._bot_manager.start_bot(inst, context.application)
+        self._bot_manager.start_bot(inst, context.application)

@@ -14,7 +14,7 @@ class LogLevel(IntEnum):
 
 class LoggerAdapterID(LoggerAdapter):
     def process(self, msg: Any, kwargs: MutableMapping[str, Any]) -> tuple[Any, MutableMapping[str, Any]]:
-        return "[%s] %s" % (self.extra["id"], msg), kwargs
+        return "[bot #%s] %s" % (self.extra["id"], msg), kwargs
 
 
 LoggerLike = LoggerAdapterID | Logger

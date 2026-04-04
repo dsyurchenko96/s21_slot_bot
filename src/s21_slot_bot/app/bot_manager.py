@@ -60,7 +60,7 @@ class BotManager:
             if inst.state == Lifecycle.RUNNING:
                 self.stop_bot(inst.cfg.bot_id)
 
-    async def start_bot(self, inst: BotInstance, app: Application) -> None:
+    def start_bot(self, inst: BotInstance, app: Application) -> None:
         inst.state = Lifecycle.RUNNING
         inst.task = asyncio.create_task(self.run_bot_loop(inst, app))
         self._bots[inst.cfg.bot_id] = inst
