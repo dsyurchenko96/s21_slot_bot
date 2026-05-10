@@ -1,3 +1,5 @@
+# TODO: move to graphql files?
+
 Q_GET_USER = """
 query getCurrentUser {
   user {

@@ -1,7 +1,16 @@
-from telegram.ext import Application, ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+)
 
-from s21_slot_bot.app.bot_app import InputHandler
 from s21_slot_bot.app.bot_manager import BotManager
+from s21_slot_bot.app.input_handler import InputHandler
+from s21_slot_bot.app.models import ChatDataModel, CustomContext
 from s21_slot_bot.client.s21_client import School21Client
 from s21_slot_bot.config import SlotBotServiceConfig
 
@@ -27,7 +36,8 @@ class SlotBotService:
     def _build_tg_app(
         self, tg_app_builder: type[ApplicationBuilder], token: str, input_handler: InputHandler
     ) -> Application:
-        app = tg_app_builder().token(token).build()
+        context_types = ContextTypes(context=CustomContext, chat_data=ChatDataModel)
+        app = tg_app_builder().token(token).context_types(context_types).build()
         app.add_handler(CommandHandler("start", input_handler.cmd_start))
         app.add_handler(CallbackQueryHandler(input_handler.on_cb))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, input_handler.on_text))

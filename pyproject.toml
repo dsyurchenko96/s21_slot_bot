@@ -8,7 +8,6 @@ version = "1.0.0"
 requires-python = ">= 3.14"
 dependencies = [
     "anyio==4.12.1",
-    "black==26.3.1",
     "certifi==2026.2.25",
     "charset-normalizer==3.4.6",
     "click==8.3.1",
@@ -25,9 +24,10 @@ dependencies = [
     "python-telegram-bot==22.7",
     "pytokens==0.4.1",
     "requests==2.32.5",
+    "ruff==0.15.11",
     "typing-extensions==4.15.0",
     "urllib3==2.6.3",
 ]
 
-[tool.black]
+[tool.ruff]
 line-length = 120

@@ -6,9 +6,10 @@ from telegram.ext import Application
 
 from s21_slot_bot.app.config import BotConfig
 from s21_slot_bot.app.menu_markup import MAIN_MENU_KB
-from s21_slot_bot.app.models import BotInstance, Lifecycle
+from s21_slot_bot.app.models import BotInstance, Lifecycle, Mode
 from s21_slot_bot.client.config import S21ClientConfig
 from s21_slot_bot.client.s21_client import School21Client, pick_candidate_start
+from s21_slot_bot.common.exceptions import BotNotFound
 
 
 class BotManager:
@@ -23,8 +24,11 @@ class BotManager:
         self._s21_client_factory = s21_client_factory
         self._bots: dict[str, BotInstance] = {}
 
-    def get_bot(self, bot_id: str | None) -> BotInstance | None:
-        return self._bots.get(bot_id)
+    def get_bot(self, bot_id: str | None) -> BotInstance:
+        bot = self._bots.get(bot_id)
+        if not bot:
+            raise BotNotFound(f"бот #{bot_id} не найден")
+        return bot
 
     def list_all(self, chat_id: int) -> list[BotInstance]:
         arr = [b for b in self._bots.values() if b.cfg.chat_id == chat_id]
@@ -117,29 +121,30 @@ class BotManager:
                     picked = pick_candidate_start(slots)
                     if picked:
                         start_time, staff_slot = picked
-
-                        if cfg.dry_run:
-                            self.delete_bot(inst.cfg.bot_id)
+                        # TODO: give the option to (try to) book the found slot
+                        if cfg.mode == Mode.ONLY_FIND:
                             inst.stats.attempts_success += 1
                             await app.bot.send_message(
                                 chat_id,
                                 f"🔔 bot #{cfg.bot_id} (dry-run): найден слот\n"
-                                f"проект: {cfg.project_name}\nstart: {start_time}\n"
-                                f"нужно ещё: {missing}/{cfg.required_reviews}",
+                                f"проект: {cfg.project_name}\nstart: {start_time}\n",
+                                # f"нужно ещё: {missing}/{cfg.required_reviews}",
                                 reply_markup=MAIN_MENU_KB,
                             )
+                            # TODO: delete bot?
+                            self.stop_bot(inst.cfg.bot_id)
                             return
 
-                        # booking mode: book one slot and continue until enough
                         s21_client.book(
                             answer_id=answer_id,
                             start_time_iso_z=start_time,
                             staff_slot=staff_slot,
-                            logger=inst.logger(),
+                            logger=logger,
                         )
                         currently_booked = already_booked + 1
                         inst.stats.currently_booked = currently_booked
                         inst.stats.attempts_success += 1
+                        # TODO: send 5 updates at most, delete old updates? / Have 1 update in 1 message
                         await app.bot.send_message(
                             chat_id,
                             f"✅ bot #{cfg.bot_id}: записался\n"

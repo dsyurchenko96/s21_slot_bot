@@ -1,44 +1,48 @@
 import enum
 from enum import StrEnum
 
-from telegram import CallbackQuery, Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ContextTypes
+from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
 
-from s21_slot_bot.app.exceptions import InvalidCallbackData
 from s21_slot_bot.app.flows.base import Flow
-from s21_slot_bot.app.menu_markup import MAIN_MENU_KB
-from s21_slot_bot.app.models import Screen, FlowCategory
+from s21_slot_bot.app.messages import render_message
+from s21_slot_bot.app.models import CustomContext, FlowCategory, Screen
+from s21_slot_bot.common.exceptions import InvalidCallbackData
 
 
 class StopFlowAction(StrEnum):
-    STOP_PICK_ONE = enum.auto()
-    STOP_ONE_BOT = enum.auto()
+    STOP_MENU = enum.auto()
+    PICK_ONE = enum.auto()
+    STOP_ONE = enum.auto()
     STOP_ALL = enum.auto()
 
 
 class StopFlow(Flow):
-    async def parse_callback(
-        self, callback_data: list[str], query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def parse_callback(self, callback_data: list[str], query: CallbackQuery, context: CustomContext) -> None:
         action = callback_data.pop()
         match action:
+            case StopFlowAction.STOP_MENU:
+                await self.stop_menu(query, context)
             case StopFlowAction.STOP_ALL:
                 self._bot_manager.stop_all(query.message.chat_id)
-                await query.message.reply_text("⛔ остановил всех", reply_markup=MAIN_MENU_KB)
-            case StopFlowAction.STOP_PICK_ONE:
+                text = "⛔ все боты остановлены"
+                await render_message(query, context, text)
+            case StopFlowAction.PICK_ONE:
                 await self.stop_pick_one(query, context)
-            case StopFlowAction.STOP_ONE_BOT:
+            case StopFlowAction.STOP_ONE:
                 bot_id = callback_data.pop()
                 ok = self._bot_manager.stop_bot(bot_id)
-                await query.message.reply_text("⛔ остановил" if ok else "не нашёл", reply_markup=MAIN_MENU_KB)
+                text = f"⛔ бот #{bot_id} остановлен" if ok else f"⚠️ бот #{bot_id} не найден"
+                await render_message(query, context, text)
             case _:
                 raise InvalidCallbackData
 
-    async def stop_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # TODO: change signature
+    async def stop_menu(self, update: Update, context: CustomContext) -> None:
         self._screen_set(context, Screen.STOP_MENU)
         chat_id = update.message.chat_id
         if not self._bot_manager.running(chat_id):
-            await update.message.reply_text("нет активных ботов", reply_markup=MAIN_MENU_KB)
+            text = "нет активных ботов"
+            await render_message(update, context, text)
             return
         kb = InlineKeyboardMarkup(
             [
@@ -49,23 +53,27 @@ class StopFlow(Flow):
                 ],
                 [
                     InlineKeyboardButton(
-                        "🛑 остановить одного", callback_data=f"{FlowCategory.STOP}:{StopFlowAction.STOP_PICK_ONE}"
+                        "🛑 остановить одного", callback_data=f"{FlowCategory.STOP}:{StopFlowAction.PICK_ONE}"
                     )
                 ],
             ]
         )
-        await update.message.reply_text("остановить ботов:", reply_markup=kb)
+        text = "остановить ботов:"
+        await render_message(update, context, text, kb=kb)
 
-    async def stop_pick_one(self, q, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def stop_pick_one(self, q, context: CustomContext) -> None:
         chat_id = q.message.chat_id
         bots = self._bot_manager.running(chat_id)
-        kb = [
+        kb = InlineKeyboardMarkup(
             [
-                InlineKeyboardButton(
-                    f"🛑 #{b.cfg.bot_id} — {b.cfg.project_name}",
-                    callback_data=f"{FlowCategory.STOP}:{StopFlowAction.STOP_ONE_BOT}:{b.cfg.bot_id}",
-                )
+                [
+                    InlineKeyboardButton(
+                        f"🛑 #{b.cfg.bot_id} — {b.cfg.project_name}",
+                        callback_data=f"{FlowCategory.STOP}:{StopFlowAction.STOP_ONE}:{b.cfg.bot_id}",
+                    )
+                ]
+                for b in bots[:20]
             ]
-            for b in bots[:20]
-        ]
-        await q.message.reply_text("выбери бота:", reply_markup=InlineKeyboardMarkup(kb))
+        )
+        text = "выбери бота:"
+        await render_message(q, context, text, kb=kb)

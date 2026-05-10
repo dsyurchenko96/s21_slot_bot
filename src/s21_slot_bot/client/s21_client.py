@@ -6,31 +6,32 @@ import uuid
 from datetime import datetime
 from http import HTTPStatus
 from typing import Any
-from urllib.parse import urljoin, urlparse, parse_qs
+from urllib.parse import parse_qs, urljoin, urlparse
 
+# TODO: move to aiohttp?
 import requests
 
 from s21_slot_bot.client.config import S21ClientConfig
 from s21_slot_bot.client.consts import (
     AUTH_URL,
-    REALM,
     CLIENT_ID,
-    PLATFORM_URL,
     GRAPHQL_URL,
+    PLATFORM_URL,
+    REALM,
+    USER_ROLE,
     X_EDU_ORG_UNIT_ID,
     X_EDU_PRODUCT_ID,
-    USER_ROLE,
 )
-from s21_slot_bot.client.exceptions import School21Error
-from s21_slot_bot.client.models import Tokens, ContentType, Project, ProjectStatus
+from s21_slot_bot.client.models import ContentType, Project, ProjectStatus, Tokens
 from s21_slot_bot.client.queries import (
-    Q_GET_MODULE,
-    Q_GET_SLOTS,
     Q_BOOK,
     Q_GET_CUR_PROJECTS,
-    Q_GET_USER,
     Q_GET_LOCAL_COURSE_GOALS,
+    Q_GET_MODULE,
+    Q_GET_SLOTS,
+    Q_GET_USER,
 )
+from s21_slot_bot.common.exceptions import School21Error
 from s21_slot_bot.common.logger import LoggerLike
 from s21_slot_bot.common.time import dt_to_isoz
 

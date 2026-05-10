@@ -1,17 +1,31 @@
 import asyncio
 import enum
-import logging
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, ConfigDict, AwareDatetime, PositiveInt
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, PositiveInt
+from telegram.ext import Application, CallbackContext, ExtBot
 
-from s21_slot_bot.app.consts import MIN_REQUIRED_REVIEWS, MAX_REQUIRED_REVIEWS, MIN_INTERVAL_SEC
-from s21_slot_bot.common.logger import LoggerAdapterID
+from s21_slot_bot.app.types import IntervalSec, RequiredReviews
+from s21_slot_bot.common.logger import LogEntity, LoggerAdapterID, get_id_logger
+
+
+class MenuButton(StrEnum):
+    START = "▶️ Начать"
+    STOP = "⛔ Остановить"
+    EDIT = "✏️ Изменить"
+    STATUS = "📌 Статус"
 
 
 class Lifecycle(StrEnum):
     RUNNING = enum.auto()
     STOPPED = enum.auto()
+
+    def to_text(self) -> str:
+        match self:
+            case Lifecycle.RUNNING:
+                return "активен"
+            case Lifecycle.STOPPED:
+                return "остановлен"
 
 
 class FlowCategory(StrEnum):
@@ -19,12 +33,18 @@ class FlowCategory(StrEnum):
     STOP = enum.auto()
     EDIT = enum.auto()
     STATUS = enum.auto()
-    SETTINGS = enum.auto()
 
 
 class Mode(StrEnum):
     ONLY_FIND = enum.auto()
     FIND_AND_BOOK = enum.auto()
+
+    def to_text(self) -> str:
+        match self:
+            case Mode.ONLY_FIND:
+                return "найти слот без записи"
+            case Mode.FIND_AND_BOOK:
+                return "найти слоты и записаться"
 
 
 # TODO: separate into Action? rename?
@@ -49,8 +69,20 @@ class Screen(StrEnum):
     EDIT_WAIT_TO = enum.auto()
     EDIT_WAIT_INTERVAL = enum.auto()
 
-    SETTINGS_MENU = enum.auto()
-    SETTINGS_WAIT_INTERVAL = enum.auto()
+
+class ChatDataModel(BaseModel):
+    screen: Screen = Screen.MENU
+    wizard_msg_id: int | None = None
+
+    projects_map: dict[int, str] = {}
+    start_project_id: int | None = None
+    start_project_name: str | None = None
+    start_required_reviews: RequiredReviews | None = None
+    start_from: AwareDatetime | None = None
+    start_to: AwareDatetime | None = None
+    start_mode: Mode | None = None
+
+    edit_bot_id: str | None = None
 
 
 class Stats(BaseModel):
@@ -67,11 +99,11 @@ class BotConfig(BaseModel):
     chat_id: PositiveInt
     project_id: PositiveInt
     project_name: str
-    required_reviews: int = Field(ge=MIN_REQUIRED_REVIEWS, le=MAX_REQUIRED_REVIEWS)
+    required_reviews: RequiredReviews
     from_dt: AwareDatetime
     to_dt: AwareDatetime
-    interval_sec: int = Field(ge=MIN_INTERVAL_SEC)
-    dry_run: bool
+    interval_sec: IntervalSec
+    mode: Mode
 
 
 class BotInstance(BaseModel):
@@ -83,6 +115,16 @@ class BotInstance(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def logger(self) -> LoggerAdapterID:
-        logger = logging.getLogger(__name__)
-        adapter = LoggerAdapterID(logger, {"id": self.cfg.bot_id})
-        return adapter
+        return get_id_logger(LogEntity.BOT, self.cfg.bot_id)
+
+
+class CustomContext(CallbackContext[ExtBot, dict, ChatDataModel, dict]):
+    """Wrapper around CallbackContext to pass a custom chat data model as a type parameter."""
+
+    def __init__(
+        self,
+        application: Application,
+        chat_id: int | None = None,
+        user_id: int | None = None,
+    ):
+        super().__init__(application=application, chat_id=chat_id, user_id=user_id)

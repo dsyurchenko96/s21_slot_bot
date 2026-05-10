@@ -1,7 +1,11 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from pydantic import TypeAdapter, ValidationError
+import pydantic
+from pydantic import AwareDatetime, TypeAdapter
+
+from s21_slot_bot.common.exceptions import InvalidUserInput
+from s21_slot_bot.common.logger import LoggerLike, LogLevel
 
 
 def dt_to_isoz(dt: datetime) -> str:
@@ -12,18 +16,29 @@ def dt_to_pretty(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def str_to_dt(text: str, tz: ZoneInfo) -> datetime:
-    dt = TypeAdapter(datetime).validate_strings(text)
+def str_to_dt(text: str, tz: ZoneInfo, logger: LoggerLike, log_level: LogLevel = LogLevel.ERROR) -> datetime:
+    try:
+        dt = TypeAdapter(datetime).validate_strings(text)
+    except pydantic.ValidationError as e:
+        logger.log(
+            log_level, f"Failed to parse user input `{text}` as datetime", exc_info=bool(log_level == LogLevel.ERROR)
+        )
+        raise InvalidUserInput("неподдерживаемый формат времени") from e
     if not dt.tzinfo:
         dt = dt.replace(tzinfo=tz)
     return dt
 
 
-def str_to_dt_with_from(text: str, tz: ZoneInfo, from_dt: datetime) -> datetime:
+def str_to_dt_with_from(text: str, tz: ZoneInfo, from_dt: AwareDatetime, logger: LoggerLike) -> datetime:
     try:
-        dt_to = str_to_dt(text, tz)
+        dt_to = str_to_dt(text, tz, logger, log_level=LogLevel.INFO)
         return dt_to
-    except ValidationError:
+    except InvalidUserInput:
+        pass
+    try:
         delta = TypeAdapter(timedelta).validate_strings(text)
         dt_to = from_dt + delta
         return dt_to
+    except pydantic.ValidationError as e:
+        logger.error(f"Failed to parse user input `{text}` as timedelta")
+        raise InvalidUserInput("неподдерживаемый формат времени") from e
