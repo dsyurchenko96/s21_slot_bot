@@ -1,15 +1,14 @@
 import enum
-from enum import StrEnum
 
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
 
-from s21_slot_bot.app.flows.base import Flow
-from s21_slot_bot.app.messages import render_message
-from s21_slot_bot.app.models import CustomContext, FlowCategory, Screen
-from s21_slot_bot.common.exceptions import InvalidCallbackData
+from s21_slot_bot.app.flows.base import Flow, FlowAction
+from s21_slot_bot.app.models import CustomContext, FlowCategory
+from s21_slot_bot.common.exceptions import InvalidCallbackDataError
+from s21_slot_bot.common.logger import get_user_input_logger
 
 
-class StopFlowAction(StrEnum):
+class StopFlowAction(FlowAction):
     STOP_MENU = enum.auto()
     PICK_ONE = enum.auto()
     STOP_ONE = enum.auto()
@@ -23,26 +22,23 @@ class StopFlow(Flow):
             case StopFlowAction.STOP_MENU:
                 await self.stop_menu(query, context)
             case StopFlowAction.STOP_ALL:
-                self._bot_manager.stop_all(query.message.chat_id)
-                text = "⛔ все боты остановлены"
-                await render_message(query, context, text)
+                self._bot_manager.stop_all()
+                await self._messenger.render_menu_message(context, "⛔ все боты остановлены")
             case StopFlowAction.PICK_ONE:
                 await self.stop_pick_one(query, context)
             case StopFlowAction.STOP_ONE:
                 bot_id = callback_data.pop()
                 ok = self._bot_manager.stop_bot(bot_id)
                 text = f"⛔ бот #{bot_id} остановлен" if ok else f"⚠️ бот #{bot_id} не найден"
-                await render_message(query, context, text)
+                await self._messenger.render_menu_message(context, text)
             case _:
-                raise InvalidCallbackData
+                raise InvalidCallbackDataError
 
-    # TODO: change signature
-    async def stop_menu(self, update: Update, context: CustomContext) -> None:
-        self._screen_set(context, Screen.STOP_MENU)
-        chat_id = update.message.chat_id
-        if not self._bot_manager.running(chat_id):
-            text = "нет активных ботов"
-            await render_message(update, context, text)
+    async def stop_menu(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
+        logger = get_user_input_logger(user_input)
+        logger.info("Showing stop menu...")
+        if not self._bot_manager.running():
+            await self._messenger.render_menu_message(context, "нет активных ботов")
             return
         kb = InlineKeyboardMarkup(
             [
@@ -58,12 +54,12 @@ class StopFlow(Flow):
                 ],
             ]
         )
-        text = "остановить ботов:"
-        await render_message(update, context, text, kb=kb)
+        await self._messenger.render_menu_message(context, "остановить ботов:", kb=kb)
 
-    async def stop_pick_one(self, q, context: CustomContext) -> None:
-        chat_id = q.message.chat_id
-        bots = self._bot_manager.running(chat_id)
+    async def stop_pick_one(self, query: CallbackQuery, context: CustomContext) -> None:
+        logger = get_user_input_logger(query)
+        logger.info("Listing bots to be stopped...")
+        bots = self._bot_manager.running()
         kb = InlineKeyboardMarkup(
             [
                 [
@@ -75,5 +71,4 @@ class StopFlow(Flow):
                 for b in bots[:20]
             ]
         )
-        text = "выбери бота:"
-        await render_message(q, context, text, kb=kb)
+        await self._messenger.render_menu_message(context, "выбери бота:", kb=kb)

@@ -1,20 +1,16 @@
 import enum
-import logging
-from enum import StrEnum
 
-import telegram
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
 
-from s21_slot_bot.app.flows.base import Flow
-from s21_slot_bot.app.messages import render_message
+from s21_slot_bot.app.flows.base import Flow, FlowAction
 from s21_slot_bot.app.models import BotInstance, CustomContext, FlowCategory
-from s21_slot_bot.common.exceptions import InvalidCallbackData
+from s21_slot_bot.common.exceptions import InvalidCallbackDataError
 from s21_slot_bot.common.logger import get_user_input_logger
 from s21_slot_bot.common.strings import ensure_str
 from s21_slot_bot.common.time import dt_to_pretty
 
 
-class StatusFlowAction(StrEnum):
+class StatusFlowAction(FlowAction):
     SHOW = enum.auto()
 
 
@@ -25,21 +21,20 @@ class StatusFlow(Flow):
             case StatusFlowAction.SHOW:
                 await self.status_show(query, context)
             case _:
-                raise InvalidCallbackData
+                raise InvalidCallbackDataError
 
     # TODO: break down bot statuses based on project
     async def status_show(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
         logger = get_user_input_logger(user_input)
-        logger.info("Showing status")
-        chat_id = user_input.message.chat_id
-        running = self._bot_manager.running_count(chat_id)
+        logger.info("Showing status...")
+        running = len(self._bot_manager.running())
         lines = [
             "📌 статус",
             f"активных: {running}",
             f"максимум: {self._bot_manager.bot_config.max_bots}",
             f"интервал: {self._bot_manager.bot_config.poll_interval_sec} секунд",
         ]
-        bots = self._bot_manager.list_all(chat_id)
+        bots = self._bot_manager.list_all()
         if not bots:
             lines.append("ботов нет")
         else:
@@ -51,7 +46,7 @@ class StatusFlow(Flow):
                 [InlineKeyboardButton("🔄 обновить", callback_data=f"{FlowCategory.STATUS}:{StatusFlowAction.SHOW}")],
             ]
         )
-        await render_message(user_input, context, text, kb=kb)
+        await self._messenger.render_menu_message(context, text, kb=kb)
 
     def _bot_line(self, inst: BotInstance) -> str:
         c = inst.cfg

@@ -1,12 +1,25 @@
 import asyncio
 import enum
 from enum import StrEnum
+from typing import Annotated
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, PositiveInt
-from telegram.ext import Application, CallbackContext, ExtBot
+from telegram.ext import Application, CallbackContext, ExtBot, JobQueue
 
-from s21_slot_bot.app.types import IntervalSec, RequiredReviews
+from s21_slot_bot.app.consts import (
+    MAX_INTERVAL_SEC,
+    MAX_NUM_BOTS,
+    MAX_REQUIRED_REVIEWS,
+    MIN_INTERVAL_SEC,
+    MIN_NUM_BOTS,
+    MIN_REQUIRED_REVIEWS,
+)
 from s21_slot_bot.common.logger import LogEntity, LoggerAdapterID, get_id_logger
+
+type RequiredReviews = Annotated[PositiveInt, Field(ge=MIN_REQUIRED_REVIEWS, le=MAX_REQUIRED_REVIEWS)]
+type IntervalSec = Annotated[PositiveInt, Field(ge=MIN_INTERVAL_SEC, le=MAX_INTERVAL_SEC)]
+type NumBots = Annotated[PositiveInt, Field(ge=MIN_NUM_BOTS, le=MAX_NUM_BOTS)]
+type App = Application[ExtBot, CustomContext, dict, ChatDataModel, dict, None]
 
 
 class MenuButton(StrEnum):
@@ -47,24 +60,12 @@ class Mode(StrEnum):
                 return "найти слоты и записаться"
 
 
-# TODO: separate into Action? rename?
 class Screen(StrEnum):
     MENU = enum.auto()
 
-    START_PICK_PROJECT = enum.auto()
-    START_PICK_NUM = enum.auto()
     START_PICK_FROM = enum.auto()
-    START_WAIT_FROM = enum.auto()
     START_PICK_TO = enum.auto()
-    START_WAIT_TO = enum.auto()
-    START_PICK_MODE = enum.auto()
-    START_CONFIRM = enum.auto()
 
-    STOP_MENU = enum.auto()
-    STOP_MULTI = enum.auto()
-
-    EDIT_PICK = enum.auto()
-    EDIT_MENU = enum.auto()
     EDIT_WAIT_FROM = enum.auto()
     EDIT_WAIT_TO = enum.auto()
     EDIT_WAIT_INTERVAL = enum.auto()
@@ -72,7 +73,9 @@ class Screen(StrEnum):
 
 class ChatDataModel(BaseModel):
     screen: Screen = Screen.MENU
-    wizard_msg_id: int | None = None
+    menu_msg_id: int | None = None
+    menu_error_msg_id: int | None = None
+    should_move_menu: bool = False
 
     projects_map: dict[int, str] = {}
     start_project_id: int | None = None
@@ -95,8 +98,6 @@ class Stats(BaseModel):
 
 class BotConfig(BaseModel):
     bot_id: str
-    # TODO: move chat_id to env
-    chat_id: PositiveInt
     project_id: PositiveInt
     project_name: str
     required_reviews: RequiredReviews

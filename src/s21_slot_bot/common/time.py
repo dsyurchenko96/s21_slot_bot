@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 import pydantic
 from pydantic import AwareDatetime, TypeAdapter
 
-from s21_slot_bot.common.exceptions import InvalidUserInput
+from s21_slot_bot.common.exceptions import InvalidUserInputError
 from s21_slot_bot.common.logger import LoggerLike, LogLevel
 
 
@@ -23,7 +23,7 @@ def str_to_dt(text: str, tz: ZoneInfo, logger: LoggerLike, log_level: LogLevel =
         logger.log(
             log_level, f"Failed to parse user input `{text}` as datetime", exc_info=bool(log_level == LogLevel.ERROR)
         )
-        raise InvalidUserInput("неподдерживаемый формат времени") from e
+        raise InvalidUserInputError("неподдерживаемый формат времени") from e
     if not dt.tzinfo:
         dt = dt.replace(tzinfo=tz)
     return dt
@@ -33,7 +33,7 @@ def str_to_dt_with_from(text: str, tz: ZoneInfo, from_dt: AwareDatetime, logger:
     try:
         dt_to = str_to_dt(text, tz, logger, log_level=LogLevel.INFO)
         return dt_to
-    except InvalidUserInput:
+    except InvalidUserInputError:
         pass
     try:
         delta = TypeAdapter(timedelta).validate_strings(text)
@@ -41,4 +41,4 @@ def str_to_dt_with_from(text: str, tz: ZoneInfo, from_dt: AwareDatetime, logger:
         return dt_to
     except pydantic.ValidationError as e:
         logger.error(f"Failed to parse user input `{text}` as timedelta")
-        raise InvalidUserInput("неподдерживаемый формат времени") from e
+        raise InvalidUserInputError("неподдерживаемый формат времени") from e

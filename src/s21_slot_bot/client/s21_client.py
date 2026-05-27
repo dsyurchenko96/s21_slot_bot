@@ -5,11 +5,12 @@ import time
 import uuid
 from datetime import datetime
 from http import HTTPStatus
-from typing import Any
+from typing import Any, NoReturn
 from urllib.parse import parse_qs, urljoin, urlparse
 
 # TODO: move to aiohttp?
 import requests
+from requests import HTTPError
 
 from s21_slot_bot.client.config import S21ClientConfig
 from s21_slot_bot.client.consts import (
@@ -68,7 +69,10 @@ class School21Client:
     def login(self, logger: LoggerLike) -> None:
         logger.info("Logging in")
         auth_resp = self._sess.get(self._auth_endpoint, timeout=self._timeout_sec)
-        auth_resp.raise_for_status()
+        try:
+            auth_resp.raise_for_status()
+        except HTTPError as e:
+            raise School21Error(f"ошибка авторизации: `{e}`", status=HTTPStatus(auth_resp.status_code)) from e
 
         action_url = self._extract_login_action(auth_resp.text, AUTH_URL)
         action_resp = self._sess.post(
@@ -80,7 +84,7 @@ class School21Client:
 
         code = self._extract_code_from_redirect_history(action_resp.history + [action_resp])
         if not code:
-            raise School21Error("не смог извлечь code из редиректов (логин/пароль/2fa?)")
+            raise School21Error("не удалось извлечь код авторизации", status=HTTPStatus(auth_resp.status_code))
 
         token_resp = self._sess.post(
             self._token_endpoint,
@@ -93,7 +97,11 @@ class School21Client:
             headers={"Content-Type": ContentType.APPLICATION_FORM_URL_ENCODED},
             timeout=self._timeout_sec,
         )
-        token_resp.raise_for_status()
+        try:
+            token_resp.raise_for_status()
+        except HTTPError as e:
+            raise School21Error(f"ошибка при запросе токена: `{e}`", status=HTTPStatus(token_resp.status_code)) from e
+
         payload = token_resp.json()
 
         self._set_tokens_from_payload(payload)
@@ -110,7 +118,7 @@ class School21Client:
             logger.info("User ID is `%s`", user_id)
             return user_id
         except Exception as e:
-            raise self._formatted_error(operation_name, e, data)
+            self._raise_parsing_error(operation_name, e, data)
 
     def get_reviewed_projects(self, user_id: str, logger: LoggerLike) -> list[Project]:
         operation_name = "getStudentCurrentProjects"
@@ -132,8 +140,10 @@ class School21Client:
                     reviewed_projects.append(project)
             logger.info("Currently reviewed projects: %s", [project.name for project in reviewed_projects] or "None")
             return reviewed_projects
+        except School21Error:
+            raise
         except Exception as e:
-            raise self._formatted_error(operation_name, e, data)
+            self._raise_parsing_error(operation_name, e, data)
 
     def get_local_course_goals(self, course_id: int, logger: LoggerLike) -> list[Project]:
         operation_name = "getLocalCourseGoals"
@@ -148,7 +158,7 @@ class School21Client:
             )
             return course_projects
         except Exception as e:
-            raise self._formatted_error(operation_name, e, data)
+            self._raise_parsing_error(operation_name, e, data)
 
     def get_task_and_answer(self, module_id: int, logger: LoggerLike) -> tuple[str, str]:
         operation_name = "calendarGetModule"
@@ -159,7 +169,7 @@ class School21Client:
             logger.info("Received task_id `%s` and answer_id `%s`", task_id, answer_id)
             return task_id, answer_id
         except Exception as e:
-            raise self._formatted_error(operation_name, e, data)
+            self._raise_parsing_error(operation_name, e, data)
 
     def get_timeslots(
         self, task_id: str, from_dt: datetime, to_dt: datetime, logger: LoggerLike
@@ -176,7 +186,7 @@ class School21Client:
             logger.info("Received %d slots, %d booked", len(timeslots), booked)
             return timeslots, booked
         except Exception as e:
-            raise self._formatted_error(operation_name, e, data)
+            self._raise_parsing_error(operation_name, e, data)
 
     def book(
         self,
@@ -203,14 +213,15 @@ class School21Client:
             logger.info("Successfully booked a review, id `%s`", booking_id)
             return booking_id
         except Exception as e:
-            raise self._formatted_error(operation_name, e, data)
+            self._raise_parsing_error(operation_name, e, data)
 
     def _graphql(
         self, operation_name: str, query: str, variables: dict[str, Any], logger: LoggerLike
     ) -> dict[str, Any]:
         logger.info("Calling `%s` with variables `%s`", operation_name, variables)
         self._refresh_if_needed(logger)
-        assert self._tokens is not None
+        if not self._tokens:
+            raise School21Error("не удалось обновить токен")
 
         headers = {
             "Content-Type": ContentType.APPLICATION_JSON,
@@ -247,12 +258,23 @@ class School21Client:
                 timeout=self._timeout_sec,
             )
 
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except HTTPError as e:
+            raise School21Error(
+                f"ошибка запроса к Школе 21 во время исполнения операции `{operation_name}`: `{e}`",
+                status=HTTPStatus(resp.status_code),
+                location={"operation": operation_name, "input": variables},
+            ) from e
+
         data = resp.json()
         logger.debug("Received response from operation `%s`: %s", operation_name, data)
 
         if data.get("errors"):
-            raise School21Error(f"graphql errors: {data['errors']}")
+            raise School21Error(
+                "ошибка запроса к Школе 21",
+                location={"operation": operation_name, "input": variables, "errors": data["errors"]},
+            )
 
         return data.get("data", {})
 
@@ -294,14 +316,14 @@ class School21Client:
         self._sess.cookies.set("tokenId", access, domain=".21-school.ru", path="/")
 
     def _extract_login_action(self, html_text: str, base_url: str) -> str:
-        m = re.search(
+        match = re.search(
             r'action\s*=\s*"([^"]*login-actions/authenticate[^"]*)"',
             html_text,
             flags=re.IGNORECASE,
         )
-        if not m:
-            raise School21Error("не смог найти login form action в HTML keycloak")
-        return urljoin(base_url, html.unescape(m.group(1)))
+        if not match:
+            raise School21Error("не удалось извлечь информацию для авторизации")
+        return urljoin(base_url, html.unescape(match.group(1)))
 
     def _extract_code_from_redirect_history(self, history: list[requests.Response]) -> str | None:
         for resp in reversed(history):
@@ -317,19 +339,7 @@ class School21Client:
                 return code
         return None
 
-    def _formatted_error(self, operation_name: str, error: Exception, data: dict[str, Any]) -> School21Error:
-        return School21Error(
-            f"Couldn't parse {operation_name}:\n\nError: {error}\n\nData:\n{json.dumps(data, ensure_ascii=False, indent=4)}"
-        )
-
-
-def pick_candidate_start(timeslots: list[dict[str, Any]]) -> tuple[str, bool] | None:
-    candidates: list[tuple[str, bool]] = []
-    for slot in timeslots:
-        staff = bool(slot.get("staffSlot", False))
-        for t in slot.get("validStartTimes") or []:
-            candidates.append((t, staff))
-    if not candidates:
-        return None
-    candidates.sort(key=lambda x: x[0])
-    return candidates[0]
+    def _raise_parsing_error(self, operation_name: str, error: Exception, data: dict[str, Any]) -> NoReturn:
+        raise School21Error(
+            f"не удалось обработать ответ от операции {operation_name}, ошибка: `{error}`", location=data
+        ) from error

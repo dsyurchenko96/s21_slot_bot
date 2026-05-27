@@ -1,21 +1,18 @@
 import enum
-from enum import StrEnum
-from functools import wraps
-from typing import Awaitable, Callable
 
+import pydantic
 from pydantic import TypeAdapter
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
 
 from s21_slot_bot.app.consts import MAX_INTERVAL_SEC, MAX_REQUIRED_REVIEWS, MIN_INTERVAL_SEC, MIN_REQUIRED_REVIEWS
-from s21_slot_bot.app.flows.base import Flow
-from s21_slot_bot.app.messages import render_message
-from s21_slot_bot.app.models import CustomContext, FlowCategory, Lifecycle, Mode, Screen
-from s21_slot_bot.app.types import IntervalSec, RequiredReviews
-from s21_slot_bot.common.exceptions import BotNotFound, InvalidCallbackData, InvalidUserInput
-from s21_slot_bot.common.time import dt_to_pretty, str_to_dt
+from s21_slot_bot.app.flows.base import Flow, FlowAction
+from s21_slot_bot.app.models import CustomContext, FlowCategory, IntervalSec, Lifecycle, Mode, RequiredReviews, Screen
+from s21_slot_bot.common.exceptions import Error, InternalError, InvalidCallbackDataError, InvalidUserInputError
+from s21_slot_bot.common.logger import get_user_input_logger
+from s21_slot_bot.common.time import dt_to_pretty, str_to_dt, str_to_dt_with_from
 
 
-class EditFlowAction(StrEnum):
+class EditFlowAction(FlowAction):
     PICK_BOT = enum.auto()
     SET_FROM = enum.auto()
     SET_TO = enum.auto()
@@ -25,23 +22,6 @@ class EditFlowAction(StrEnum):
     PICK_NUM_REVIEWS = enum.auto()
     SET_NUM_REVIEWS = enum.auto()
     RESTART = enum.auto()
-
-
-def edit_input_wrapper(
-    edit_method: Callable[[EditFlow, Update, CustomContext], str],
-) -> Callable[[EditFlow, Update, CustomContext], Awaitable[None]]:
-    @wraps(edit_method)
-    async def wrapper(self: EditFlow, update: Update, context: CustomContext) -> None:
-        try:
-            menu_update_text = edit_method(self, update, context)
-        except BotNotFound as e:
-            menu_update_text = f"❌ {e}"
-        except InvalidUserInput as e:
-            await render_message(update, context, f"❌ {e}\nпопробуй ещё раз")
-            return
-        await self.edit_menu(update, context, update_text=menu_update_text)
-
-    return wrapper
 
 
 class EditFlow(Flow):
@@ -54,14 +34,14 @@ class EditFlow(Flow):
                 context.chat_data.edit_bot_id = bot_id
                 await self.edit_menu(query, context)
             case EditFlowAction.SET_FROM:
-                self._screen_set(context, Screen.EDIT_WAIT_FROM)
-                await render_message(query, context, "введи новое начальное время поиска:")
+                context.chat_data.screen = Screen.EDIT_WAIT_FROM
+                await self._messenger.render_menu_message(context, "введи новое начальное время поиска:")
             case EditFlowAction.SET_TO:
-                self._screen_set(context, Screen.EDIT_WAIT_TO)
-                await render_message(query, context, "введи новое конечное время поиска:")
+                context.chat_data.screen = Screen.EDIT_WAIT_TO
+                await self._messenger.render_menu_message(context, "введи новое конечное время поиска:")
             case EditFlowAction.SET_INTERVAL:
-                self._screen_set(context, Screen.EDIT_WAIT_INTERVAL)
-                await render_message(query, context, "введи новый интервал (в секундах):")
+                context.chat_data.screen = Screen.EDIT_WAIT_INTERVAL
+                await self._messenger.render_menu_message(context, "введи новый интервал (в секундах):")
             case EditFlowAction.PICK_MODE:
                 await self.pick_mode(query, context)
             case EditFlowAction.SET_MODE:
@@ -98,16 +78,14 @@ class EditFlow(Flow):
             case EditFlowAction.RESTART:
                 await self.edit_restart(query, context)
             case _:
-                raise InvalidCallbackData
+                raise InvalidCallbackDataError
 
-    # TODO: change signature
     async def list_bots(self, update: Update, context: CustomContext) -> None:
-        self._screen_set(context, Screen.EDIT_PICK)
-        chat_id = update.message.chat_id
-        bots = self._bot_manager.list_all(chat_id)
+        logger = get_user_input_logger(update)
+        logger.info("Listing bots...")
+        bots = self._bot_manager.list_all()
         if not bots:
-            text = "нет ботов для изменения"
-            await render_message(update, context, text)
+            await self._messenger.render_menu_message(context, "нет ботов для изменения")
             return
         kb = InlineKeyboardMarkup(
             [
@@ -120,17 +98,15 @@ class EditFlow(Flow):
                 for b in bots[:20]
             ]
         )
-        text = "выбери бота:"
-        await render_message(update, context, text, kb=kb)
+        await self._messenger.render_menu_message(context, "выбери бота:", kb=kb)
 
-    async def edit_menu(self, q, context: CustomContext, update_text: str = "") -> None:
-        self._screen_set(context, Screen.EDIT_MENU)
+    async def edit_menu(
+        self, user_input: Update | CallbackQuery, context: CustomContext, update_text: str = ""
+    ) -> None:
+        logger = get_user_input_logger(user_input)
+        logger.info("Showing edit menu...")
         bot_id = context.chat_data.edit_bot_id
-        try:
-            inst = self._bot_manager.get_bot(bot_id)
-        except BotNotFound as e:
-            await render_message(q, context, f"❌ {e}")
-            return
+        inst = self._bot_manager.get_bot(bot_id)
         c = inst.cfg
         update_text = update_text + "\n" if update_text else ""
         text = update_text + (
@@ -162,45 +138,69 @@ class EditFlow(Flow):
                 [InlineKeyboardButton("перезапустить", callback_data=f"{FlowCategory.EDIT}:{EditFlowAction.RESTART}")],
             ]
         )
-        await render_message(q, context, text, kb=kb)
+        await self._messenger.render_menu_message(context, text, kb=kb)
 
-    @edit_input_wrapper
-    def edit_custom_from(self, update: Update, context: CustomContext) -> str:
+    async def edit_custom_from(self, update: Update, context: CustomContext) -> None:
+        logger = get_user_input_logger(update)
+        logger.info("Editing custom search start time...")
         bot_id = context.chat_data.edit_bot_id
-        inst = self._bot_manager.get_bot(bot_id)
-        from_dt = str_to_dt(update.message.text, self._bot_manager.bot_config.timezone, inst.logger())
-        if from_dt >= inst.cfg.to_dt:
-            raise InvalidUserInput(f"начальное время должно быть раньше конечного ({dt_to_pretty(inst.cfg.to_dt)})")
-        inst.cfg.from_dt = from_dt
-        menu_update_text = "✅ начальное время обновлено"
-        return menu_update_text
-
-    @edit_input_wrapper
-    def edit_custom_to(self, update: Update, context: CustomContext) -> str:
-        bot_id = context.chat_data.edit_bot_id
-        inst = self._bot_manager.get_bot(bot_id)
-        to_dt = str_to_dt(update.message.text, self._bot_manager.bot_config.timezone, inst.logger())
-        if to_dt >= inst.cfg.from_dt:
-            raise InvalidUserInput(f"конечное время должно быть позже начального ({dt_to_pretty(inst.cfg.from_dt)})")
-        inst.cfg.to_dt = to_dt
-        menu_update_text = "✅ конечное время обновлено"
-        return menu_update_text
-
-    @edit_input_wrapper
-    async def edit_custom_interval(self, update: Update, context: CustomContext) -> str:
-        bot_id = context.chat_data.edit_bot_id
-        inst = self._bot_manager.get_bot(bot_id)
         try:
+            inst = self._bot_manager.get_bot(bot_id)
+            from_dt = str_to_dt(update.message.text, self._bot_manager.bot_config.timezone, inst.logger())
+            if from_dt >= inst.cfg.to_dt:
+                raise InvalidUserInputError(
+                    f"начальное время должно быть раньше конечного ({dt_to_pretty(inst.cfg.to_dt)})"
+                )
+        except Error:
+            # TODO: check necessity of explicit call
+            await self.edit_menu(update, context)
+            raise
+        inst.cfg.from_dt = from_dt
+        await self.edit_menu(update, context, update_text="✅ начальное время обновлено")
+
+    async def edit_custom_to(self, update: Update, context: CustomContext) -> None:
+        logger = get_user_input_logger(update)
+        logger.info("Editing custom search end time...")
+        bot_id = context.chat_data.edit_bot_id
+        try:
+            inst = self._bot_manager.get_bot(bot_id)
+            from_dt = inst.cfg.from_dt
+            if not from_dt:
+                raise InternalError("начальное время поиска не задано", location=context.chat_data.model_dump())
+            to_dt = str_to_dt_with_from(
+                update.message.text, self._bot_manager.bot_config.timezone, from_dt, inst.logger()
+            )
+            if to_dt >= inst.cfg.from_dt:
+                raise InvalidUserInputError(
+                    f"конечное время должно быть позже начального ({dt_to_pretty(inst.cfg.from_dt)})"
+                )
+        except Error:
+            await self.edit_menu(update, context)
+            raise
+        inst.cfg.to_dt = to_dt
+        await self.edit_menu(update, context, update_text="✅ конечное время обновлено")
+
+    async def edit_custom_interval(self, update: Update, context: CustomContext) -> None:
+        logger = get_user_input_logger(update)
+        logger.info("Editing interval...")
+        bot_id = context.chat_data.edit_bot_id
+        try:
+            inst = self._bot_manager.get_bot(bot_id)
             interval_sec = TypeAdapter(IntervalSec).validate_strings(update.message.text)
-        except ValueError as e:
-            raise InvalidUserInput(
+        except pydantic.ValidationError as e:
+            await self.edit_menu(update, context)
+            raise InvalidUserInputError(
                 f"интервал может быть задан только от {MIN_INTERVAL_SEC} до {MAX_INTERVAL_SEC} секунд"
             ) from e
+        except Error:
+            await self.edit_menu(update, context)
+            raise
         inst.cfg.interval_sec = interval_sec
-        menu_update_text = "✅ интервал обновлен"
-        return menu_update_text
+        await self.edit_menu(update, context, update_text="✅ интервал обновлен")
 
-    async def pick_mode(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
+    async def pick_mode(self, query: CallbackQuery, context: CustomContext) -> None:
+        logger = get_user_input_logger(query)
+        logger.info("Editing bot search mode...")
         kb = InlineKeyboardMarkup(
             [
                 [
@@ -217,11 +217,11 @@ class EditFlow(Flow):
                 ],
             ]
         )
-        text = "выбери режим:"
-        await render_message(user_input, context, text, kb=kb)
+        await self._messenger.render_menu_message(context, "выбери режим:", kb=kb)
 
-    async def pick_num_reviews(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
-        # self._screen_set(context, Screen.ED)
+    async def pick_num_reviews(self, query: CallbackQuery, context: CustomContext) -> None:
+        logger = get_user_input_logger(query)
+        logger.info("Editing bot review number...")
         kb = InlineKeyboardMarkup(
             [
                 [
@@ -232,24 +232,20 @@ class EditFlow(Flow):
                 ],
             ]
         )
-        text = "сколько проверок нужно (1–3)?"
-        await render_message(user_input, context, text, kb=kb)
-        # await self._respond_to_input(user_input, message, kb)
+        await self._messenger.render_menu_message(context, "сколько проверок нужно (1–3)?", kb=kb)
 
-    async def edit_restart(self, q, context: CustomContext) -> None:
-        chat_id = q.message.chat_id
+    async def edit_restart(self, query: CallbackQuery, context: CustomContext) -> None:
+        logger = get_user_input_logger(query)
         bot_id = context.chat_data.edit_bot_id
+        logger.info("Restarting bot `%s`...", bot_id)
         try:
             inst = self._bot_manager.get_bot(bot_id)
             if inst.state == Lifecycle.RUNNING:
-                raise InvalidUserInput(f"бот #{bot_id} уже активен")
-            if self._bot_manager.running_count(chat_id) >= self._bot_manager.bot_config.max_bots:
-                raise InvalidUserInput(
-                    f"Максимальное количество ботов превышено ({self._bot_manager.bot_config.max_bots}) - останови/удали имеющихся или поменяй максимальное количество"
-                )
-        except (BotNotFound, InvalidUserInput) as e:
-            await self.edit_menu(q, context, update_text=f"❌ {e}")
-            return
+                raise InvalidUserInputError(f"бот #{bot_id} уже активен", help_text="выбери другого бота")
+            self._bot_manager.check_bot_limits()
+        except Error:
+            await self.edit_menu(query, context)
+            raise
 
-        self._bot_manager.start_bot(inst, context.application)
-        await self.edit_menu(q, context, update_text=f"🔄 Бот #{bot_id} перезапущен")
+        self._bot_manager.start_bot(inst, context)
+        await self.edit_menu(query, context, update_text=f"🔄 Бот #{bot_id} перезапущен")

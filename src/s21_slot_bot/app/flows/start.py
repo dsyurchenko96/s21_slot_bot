@@ -8,12 +8,17 @@ from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, 
 
 from s21_slot_bot.app.bot_manager import BotManager
 from s21_slot_bot.app.consts import MAX_REQUIRED_REVIEWS, MIN_REQUIRED_REVIEWS
-from s21_slot_bot.app.flows.base import Flow
-from s21_slot_bot.app.messages import render_message
-from s21_slot_bot.app.models import BotConfig, BotInstance, CustomContext, FlowCategory, Mode, Screen
-from s21_slot_bot.app.types import RequiredReviews
+from s21_slot_bot.app.flows.base import Flow, FlowAction
+from s21_slot_bot.app.messenger import Messenger
+from s21_slot_bot.app.models import BotConfig, BotInstance, CustomContext, FlowCategory, Mode, RequiredReviews, Screen
 from s21_slot_bot.client.s21_client import School21Client
-from s21_slot_bot.common.exceptions import InternalError, InvalidCallbackData, InvalidUserInput
+from s21_slot_bot.common.exceptions import (
+    InternalError,
+    InvalidCallbackDataError,
+    InvalidUserInputError,
+    MenuError,
+    School21Error,
+)
 from s21_slot_bot.common.logger import get_user_input_logger
 from s21_slot_bot.common.random import random_id
 from s21_slot_bot.common.strings import ensure_str
@@ -21,7 +26,7 @@ from s21_slot_bot.common.time import dt_to_pretty, str_to_dt_with_from
 
 
 # NOTE: ordered
-class StartFlowAction(StrEnum):
+class StartFlowAction(FlowAction):
     LIST_PROJECTS = enum.auto()
     PICK_PROJECT = enum.auto()
     PICK_MODE = enum.auto()
@@ -38,8 +43,8 @@ class StartFlowAction(StrEnum):
 
 
 class StartFlow(Flow):
-    def __init__(self, s21_client: School21Client, bot_manager: BotManager):
-        super().__init__(s21_client, bot_manager)
+    def __init__(self, s21_client: School21Client, bot_manager: BotManager, messenger: Messenger):
+        super().__init__(s21_client, bot_manager, messenger)
         self._action_to_method: dict[
             StartFlowAction, Callable[[Update | CallbackQuery, CustomContext], Coroutine[Any, Any, None]]
         ] = {
@@ -87,7 +92,7 @@ class StartFlow(Flow):
             case StartFlowAction.PICK_TO:
                 from_dt = context.chat_data.start_from
                 if not from_dt:
-                    raise InternalError("начальное время поиска не задано")
+                    raise InternalError("начальное время поиска не задано", location=context.chat_data.model_dump())
                 to_choice = str_to_dt_with_from(
                     callback_data.pop(), self._bot_manager.bot_config.timezone, from_dt, logger
                 )
@@ -102,29 +107,29 @@ class StartFlow(Flow):
                 prev_method = self._action_to_method.get(prev_action)
                 await prev_method(query, context)
             case _:
-                raise InvalidCallbackData
+                raise InvalidCallbackDataError
 
     async def list_projects(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
         logger = get_user_input_logger(user_input)
         logger.info("Listing projects...")
-        chat_id = user_input.message.chat_id
-        if self._bot_manager.running_count(chat_id) >= self._bot_manager.bot_config.max_bots:
-            text = f"Максимальное количество ботов превышено ({self._bot_manager.bot_config.max_bots}) - останови/удали имеющихся или поменяй количество"
-            await render_message(user_input, context, text)
-            return
+        # if self._bot_manager.running_count() >= self._bot_manager.bot_config.max_bots:
+        #     text = f"Максимальное количество ботов превышено ({self._bot_manager.bot_config.max_bots}) - останови/удали имеющихся или поменяй количество"
+        #     await self._messenger.render_menu(context, text)
+        #     return
+        self._bot_manager.check_bot_limits()
 
-        self._screen_set(context, Screen.START_PICK_PROJECT)
+        # self._screen_set(context, Screen.START_PICK_PROJECT)
         try:
             user_id = self._s21_client.get_user_id(logger)
             projects = self._s21_client.get_reviewed_projects(user_id, logger)
-        except Exception as e:
-            text = f"❌ не удалось получить проекты: {e}"
-            await render_message(user_input, context, text)
-            return
+        except School21Error as e:
+            raise MenuError(f"не удалось получить проекты: {e}") from e
+            # await render_menu(user_input, context, text)
+            # return
 
         if not projects:
-            text = "📭 нет активных проектов на проверке"
-            await render_message(user_input, context, text)
+            # raise MenuError("нет активных проектов на проверке")
+            await self._messenger.render_menu_message(context, "📭 нет активных проектов на проверке")
             return
 
         context.chat_data.projects_map = {project.id: project.name for project in projects}
@@ -147,14 +152,13 @@ class StartFlow(Flow):
                 for project in projects[:20]
             ]
         )
-        text = "выбери проект:"
-        await render_message(user_input, context, text, kb=kb)
+        await self._messenger.render_menu_message(context, "выбери проект:", kb=kb)
 
     async def pick_mode(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
         logger = get_user_input_logger(user_input)
         logger.info("Picking mode...")
         action = StartFlowAction.PICK_MODE
-        self._screen_set(context, Screen.START_PICK_MODE)
+        # self._screen_set(context, Screen.START_PICK_MODE)
         buttons = [
             [
                 InlineKeyboardButton(
@@ -181,11 +185,13 @@ class StartFlow(Flow):
             )
         kb = InlineKeyboardMarkup(buttons)
         text = self._get_chosen_project_info_text(action, context) + "выбери режим:"
-        await render_message(user_input, context, text, kb=kb)
+        await self._messenger.render_menu_message(context, text, kb=kb)
 
-    async def pick_num_reviews(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
+    async def pick_num_reviews(self, query: CallbackQuery, context: CustomContext) -> None:
+        logger = get_user_input_logger(query)
+        logger.info("Picking number of reviews...")
         action = StartFlowAction.PICK_NUM_REVIEWS
-        self._screen_set(context, Screen.START_PICK_NUM)
+        # self._screen_set(context, Screen.START_PICK_NUM)
         kb = InlineKeyboardMarkup(
             [
                 [
@@ -201,11 +207,13 @@ class StartFlow(Flow):
             ]
         )
         text = self._get_chosen_project_info_text(action, context) + "выбери количество проверок:"
-        await render_message(user_input, context, text, kb=kb)
+        await self._messenger.render_menu_message(context, text, kb=kb)
 
-    async def pick_from(self, user_input: Update | CallbackQuery, context: CustomContext, error_text: str = "") -> None:
+    async def pick_from(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
+        logger = get_user_input_logger(user_input)
+        logger.info("Picking search start time...")
         action = StartFlowAction.PICK_FROM
-        self._screen_set(context, Screen.START_PICK_FROM)
+        context.chat_data.screen = Screen.START_PICK_FROM
         prev_action = (
             StartFlowAction.PICK_NUM_REVIEWS
             if context.chat_data.start_mode == Mode.FIND_AND_BOOK
@@ -229,25 +237,27 @@ class StartFlow(Flow):
         text = (
             self._get_chosen_project_info_text(action, context)
             + "выбери начальное время поиска\n(или введи вручную в формате [YYYY-MM-DD] HH:MM[:SS]):"
-            + error_text
         )
-        await render_message(user_input, context, text, kb=kb)
+        await self._messenger.render_menu_message(context, text, kb=kb)
 
     async def custom_from(self, update: Update, context: CustomContext) -> None:
         logger = get_user_input_logger(update)
+        logger.info("Parsing custom search start time...")
         try:
             now = datetime.now(tz=self._bot_manager.bot_config.timezone)
             start_from = str_to_dt_with_from(update.message.text, self._bot_manager.bot_config.timezone, now, logger)
             context.chat_data.start_from = start_from
-        except InvalidUserInput as e:
-            await self.pick_from(update, context, error_text=f"\n❌ {e}\nпопробуй еще раз")
-            return
+        except InvalidUserInputError as e:
+            await self.pick_from(update, context)
+            raise e
 
         await self.pick_to(update, context)
 
-    async def pick_to(self, user_input: Update | CallbackQuery, context: CustomContext, error_text: str = "") -> None:
+    async def pick_to(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
+        logger = get_user_input_logger(user_input)
+        logger.info("Picking search end time...")
         action = StartFlowAction.PICK_TO
-        self._screen_set(context, Screen.START_PICK_TO)
+        context.chat_data.screen = Screen.START_PICK_TO
         kb = InlineKeyboardMarkup(
             [
                 [
@@ -265,32 +275,33 @@ class StartFlow(Flow):
         text = (
             self._get_chosen_project_info_text(action, context)
             + "выбери конечное время поиска относительно начала\n(или введи вручную в формате [YYYY-MM-DD] HH:MM[:SS]):"
-            + error_text
         )
-        await render_message(user_input, context, text, kb=kb)
+        await self._messenger.render_menu_message(context, text, kb=kb)
 
     async def custom_to(self, update: Update, context: CustomContext) -> None:
         logger = get_user_input_logger(update)
+        logger.info("Parsing custom search end time...")
         try:
             start_from = context.chat_data.start_from
             if not start_from:
-                raise InternalError("начальное время поиска не задано")
+                raise InternalError("начальное время поиска не задано", location=context.chat_data.model_dump())
             start_to = str_to_dt_with_from(
                 update.message.text, self._bot_manager.bot_config.timezone, start_from, logger
             )
             if start_to <= start_from:
-                raise InvalidUserInput(f"конечное время должно быть позже начального ({dt_to_pretty(start_to)})")
+                raise InvalidUserInputError(f"конечное время должно быть позже начального ({dt_to_pretty(start_to)})")
             context.chat_data.start_to = start_to
-        except InvalidUserInput as e:
-            await self.pick_to(update, context, error_text=f"\n❌ {e}\nпопробуй еще раз")
-            return
+        except InvalidUserInputError as e:
+            await self.pick_to(update, context)
+            raise e
 
         await self.confirm(update, context)
 
     async def confirm(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
+        logger = get_user_input_logger(user_input)
+        logger.info("Confirming the chosen bot search parameters...")
         action = StartFlowAction.CONFIRM
-        self._screen_set(context, Screen.START_CONFIRM)
-        chat_id = user_input.message.chat_id
+        # self._screen_set(context, Screen.START_CONFIRM)
 
         kb = InlineKeyboardMarkup(
             [
@@ -305,25 +316,20 @@ class StartFlow(Flow):
         )
         text = (
             self._get_chosen_project_info_text(action, context)
-            + f"активных ботов: {self._bot_manager.running_count(chat_id)} "
-            f"/ максимум {self._bot_manager.bot_config.max_bots}"
+            + f"активных ботов: {len(self._bot_manager.running())} / максимум {self._bot_manager.bot_config.max_bots}"
         )
-        await render_message(user_input, context, text, kb=kb)
+        await self._messenger.render_menu_message(context, text, kb=kb)
 
-    # TODO: figure out the q type (assert message / pass message?)
-    async def finalize(self, q: CallbackQuery, context: CustomContext) -> None:
+    async def finalize(self, query: CallbackQuery, context: CustomContext) -> None:
+        logger = get_user_input_logger(query)
+        logger.info("Finalizing the chosen bot search parameters...")
         action = StartFlowAction.CONFIRM
         text = self._get_chosen_project_info_text(action, context)
-        chat_id = q.message.chat_id
-        if self._bot_manager.running_count(chat_id) >= self._bot_manager.bot_config.max_bots:
-            text += f"Максимальное количество ботов превышено ({self._bot_manager.bot_config.max_bots}) - останови/удали имеющихся или поменяй количество"
-            await render_message(q, context, text)
-            return
+        self._bot_manager.check_bot_limits()
 
         bot_id = random_id()
         cfg = BotConfig(
             bot_id=bot_id,
-            chat_id=chat_id,
             project_id=context.chat_data.start_project_id,
             project_name=context.chat_data.start_project_name,
             required_reviews=context.chat_data.start_required_reviews,
@@ -335,8 +341,9 @@ class StartFlow(Flow):
 
         inst = BotInstance(cfg=cfg)
         text += f"✅ Запускаю бота #{bot_id}"
-        await render_message(q, context, text)
-        self._bot_manager.start_bot(inst, context.application)
+        await self._messenger.render_menu_message(context, text)
+        self._bot_manager.start_bot(inst, context)
+        logger.info("Started bot #%s", bot_id)
 
     def _get_chosen_project_info_text(self, action: StartFlowAction, context: CustomContext) -> str:
         lines = [
