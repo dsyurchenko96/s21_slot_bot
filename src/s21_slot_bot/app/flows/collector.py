@@ -21,10 +21,18 @@ class FlowCollector:
         edit_factory: type[EditFlow] = EditFlow,
         status_factory: type[StatusFlow] = StatusFlow,
     ):
-        self.start = start_factory(s21_client=s21_client, bot_manager=bot_manager, messenger=messenger)
-        self.stop = stop_factory(s21_client=s21_client, bot_manager=bot_manager, messenger=messenger)
-        self.edit = edit_factory(s21_client=s21_client, bot_manager=bot_manager, messenger=messenger)
-        self.status = status_factory(s21_client=s21_client, bot_manager=bot_manager, messenger=messenger)
+        self.start = start_factory(
+            s21_client=s21_client, bot_manager=bot_manager, messenger=messenger, category=FlowCategory.START
+        )
+        self.stop = stop_factory(
+            s21_client=s21_client, bot_manager=bot_manager, messenger=messenger, category=FlowCategory.STOP
+        )
+        self.edit = edit_factory(
+            s21_client=s21_client, bot_manager=bot_manager, messenger=messenger, category=FlowCategory.EDIT
+        )
+        self.status = status_factory(
+            s21_client=s21_client, bot_manager=bot_manager, messenger=messenger, category=FlowCategory.STATUS
+        )
 
         self._flow_map = {
             FlowCategory.START: self.start,

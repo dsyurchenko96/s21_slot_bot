@@ -1,3 +1,4 @@
+import logging
 from contextlib import suppress
 
 import telegram
@@ -22,6 +23,7 @@ class InputHandler:
         messenger: Messenger,
         chat_id: int,
     ):
+        self._bot_manager = bot_manager
         self._messenger = messenger
         self._chat_id = chat_id
         self._flows = FlowCollector(s21_client=s21_client, bot_manager=bot_manager, messenger=messenger)
@@ -61,7 +63,7 @@ class InputHandler:
             # return
 
         context.chat_data.screen = Screen.MENU
-        await self._messenger.render_menu_message(context, "обработка")
+        await self._messenger.render_menu_message(context, "обработка запроса...")
         await method(update, context)
         await self.on_success(update, context)
 
@@ -101,6 +103,8 @@ class InputHandler:
                 await self._messenger.send(context, error.to_pretty())
             case _:
                 await self._messenger.send(context, f"❌ неизвестная ошибка: {error}")
+        if job := context.job:
+            self._bot_manager.stop_bot(job.name, context)
         logger.error("Exception while handling an update: %s", error, exc_info=error)
 
     async def on_success(self, update: Update, context: CustomContext) -> None:
@@ -112,9 +116,10 @@ class InputHandler:
         logger = get_service_hook_logger()
         logger.info("Running custom on-stop application hook...")
         chat_data = application.chat_data.get(self._chat_id)
-        await self._messenger.safe_delete(chat_data.menu_error_msg_id, logger)
-        await self._messenger.safe_delete(chat_data.menu_msg_id, logger)
-        logger.info("Deleted menu messages")
+        if chat_data:
+            await self._messenger.safe_delete(chat_data.menu_error_msg_id, logger)
+            await self._messenger.safe_delete(chat_data.menu_msg_id, logger)
+            logger.info("Deleted menu messages")
 
     def _validate_access(self, update: Update) -> None:
         message = update.message or update.callback_query.message

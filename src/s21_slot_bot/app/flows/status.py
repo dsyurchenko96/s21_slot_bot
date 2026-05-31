@@ -31,8 +31,8 @@ class StatusFlow(Flow):
         lines = [
             "📌 статус",
             f"активных: {running}",
-            f"максимум: {self._bot_manager.bot_config.max_bots}",
-            f"интервал: {self._bot_manager.bot_config.poll_interval_sec} секунд",
+            f"максимум: {self._bot_manager.max_bots}",
+            f"интервал: {self._bot_manager.poll_interval_sec} секунд",
         ]
         bots = self._bot_manager.list_all()
         if not bots:
@@ -43,7 +43,7 @@ class StatusFlow(Flow):
         text = "\n".join(lines)
         kb = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("🔄 обновить", callback_data=f"{FlowCategory.STATUS}:{StatusFlowAction.SHOW}")],
+                [InlineKeyboardButton("🔄 обновить", callback_data=f"{self._category}:{StatusFlowAction.SHOW}")],
             ]
         )
         await self._messenger.render_menu_message(context, text, kb=kb)
@@ -55,5 +55,5 @@ class StatusFlow(Flow):
             f"проверок: {inst.stats.currently_booked}/{c.required_reviews}, режим {c.mode.to_text()})\n"
             f"окно поиска: {dt_to_pretty(c.from_dt)} → {dt_to_pretty(c.to_dt)}\n"
             f"последняя попытка: {ensure_str(inst.stats.last_ping, getter=dt_to_pretty)}\n"
-            f"всего: {inst.stats.attempts_total}\n ({inst.stats.attempts_success} успешных, {inst.stats.attempts_failed} с ошибкой)\n"
+            f"всего: {inst.stats.attempts_total} ({inst.stats.attempts_success} успешных, {inst.stats.attempts_failed} с ошибкой)\n"
         )

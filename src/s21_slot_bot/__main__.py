@@ -7,7 +7,7 @@ from s21_slot_bot.service import SlotBotService
 
 def main() -> None:
     config = SlotBotServiceConfig()
-    setup_logging(config.log_level)
+    setup_logging(config.log)
     service = SlotBotService(config=config)
     service.start()
 

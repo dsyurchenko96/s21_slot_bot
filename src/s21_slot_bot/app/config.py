@@ -16,6 +16,7 @@ class BotConfig(BaseSettings):
         description="Maximum number of total bots at a time",
         default=3,
     )
+    # TODO: still necessary?
     max_retries: NonNegativeInt = Field(
         alias="MAX_RETRIES",
         description="Maximum number of request retries in a running bot loop before an error message is sent to the chat. "
@@ -27,13 +28,9 @@ class BotConfig(BaseSettings):
         description="Interval (in seconds) between slot polling requests",
         default=60,
     )
+    # TODO: still necessary?
     poll_jitter_sec: NonNegativeInt = Field(
         alias="POLL_JITTER_SEC",
         description="Upper limit (in seconds) of added random delay to polling interval. Set to 0 to disable",
         default=8,
-    )
-    timezone: ZoneInfo = Field(
-        alias="BOT_TIMEZONE",
-        description="Timezone used for input processing (unless specified in user prompt) and output",
-        default=ZoneInfo("Europe/Moscow"),
     )

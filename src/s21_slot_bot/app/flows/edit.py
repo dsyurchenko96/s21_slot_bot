@@ -92,7 +92,7 @@ class EditFlow(Flow):
                 [
                     InlineKeyboardButton(
                         f"✏️ #{b.cfg.bot_id} — {b.cfg.project_name} ({b.state.to_text()})",
-                        callback_data=f"{FlowCategory.EDIT}:{EditFlowAction.PICK_BOT}:{b.cfg.bot_id}",
+                        callback_data=f"{self._category}:{EditFlowAction.PICK_BOT}:{b.cfg.bot_id}",
                     )
                 ]
                 for b in bots[:20]
@@ -114,28 +114,24 @@ class EditFlow(Flow):
             f"окно: {dt_to_pretty(c.from_dt)} → {dt_to_pretty(c.to_dt)}\n"
             f"интервал: {c.interval_sec} секунд\n"
             f"режим: {c.mode.to_text()}\n"
+            f"количество проверок: {c.required_reviews}\n"
             f"статус: {inst.state.to_text()}"
         )
         kb = InlineKeyboardMarkup(
             [
+                [InlineKeyboardButton("начальное время", callback_data=f"{self._category}:{EditFlowAction.SET_FROM}")],
+                [InlineKeyboardButton("конечное время", callback_data=f"{self._category}:{EditFlowAction.SET_TO}")],
+                [InlineKeyboardButton("интервал", callback_data=f"{self._category}:{EditFlowAction.SET_INTERVAL}")],
+                [InlineKeyboardButton("режим", callback_data=f"{self._category}:{EditFlowAction.PICK_MODE}")],
                 [
                     InlineKeyboardButton(
-                        "начальное время", callback_data=f"{FlowCategory.EDIT}:{EditFlowAction.SET_FROM}"
-                    ),
-                    InlineKeyboardButton(
-                        "конечное время", callback_data=f"{FlowCategory.EDIT}:{EditFlowAction.SET_TO}"
-                    ),
+                        "количество проверок",
+                        callback_data=f"{self._category}:{EditFlowAction.PICK_NUM_REVIEWS}",
+                    )
                 ],
                 [
-                    InlineKeyboardButton(
-                        "интервал", callback_data=f"{FlowCategory.EDIT}:{EditFlowAction.SET_INTERVAL}"
-                    ),
-                    InlineKeyboardButton("режим", callback_data=f"{FlowCategory.EDIT}:{EditFlowAction.PICK_MODE}"),
-                    InlineKeyboardButton(
-                        "количество проверок", callback_data=f"{FlowCategory.EDIT}:{EditFlowAction.PICK_NUM_REVIEWS}"
-                    ),
+                    InlineKeyboardButton("перезапустить", callback_data=f"{self._category}:{EditFlowAction.RESTART}"),
                 ],
-                [InlineKeyboardButton("перезапустить", callback_data=f"{FlowCategory.EDIT}:{EditFlowAction.RESTART}")],
             ]
         )
         await self._messenger.render_menu_message(context, text, kb=kb)
@@ -146,7 +142,7 @@ class EditFlow(Flow):
         bot_id = context.chat_data.edit_bot_id
         try:
             inst = self._bot_manager.get_bot(bot_id)
-            from_dt = str_to_dt(update.message.text, self._bot_manager.bot_config.timezone, inst.logger())
+            from_dt = str_to_dt(update.message.text, context.bot.defaults.tzinfo, inst.logger())
             if from_dt >= inst.cfg.to_dt:
                 raise InvalidUserInputError(
                     f"начальное время должно быть раньше конечного ({dt_to_pretty(inst.cfg.to_dt)})"
@@ -167,9 +163,7 @@ class EditFlow(Flow):
             from_dt = inst.cfg.from_dt
             if not from_dt:
                 raise InternalError("начальное время поиска не задано", location=context.chat_data.model_dump())
-            to_dt = str_to_dt_with_from(
-                update.message.text, self._bot_manager.bot_config.timezone, from_dt, inst.logger()
-            )
+            to_dt = str_to_dt_with_from(update.message.text, context.bot.defaults.tzinfo, from_dt, inst.logger())
             if to_dt >= inst.cfg.from_dt:
                 raise InvalidUserInputError(
                     f"конечное время должно быть позже начального ({dt_to_pretty(inst.cfg.from_dt)})"
@@ -206,13 +200,13 @@ class EditFlow(Flow):
                 [
                     InlineKeyboardButton(
                         "🔎 Искать слоты",
-                        callback_data=f"{FlowCategory.EDIT}:{EditFlowAction.SET_MODE}:{Mode.ONLY_FIND}",
+                        callback_data=f"{self._category}:{EditFlowAction.SET_MODE}:{Mode.ONLY_FIND}",
                     )
                 ],
                 [
                     InlineKeyboardButton(
                         "✅ Записаться",
-                        callback_data=f"{FlowCategory.EDIT}:{EditFlowAction.SET_MODE}:{Mode.FIND_AND_BOOK}",
+                        callback_data=f"{self._category}:{EditFlowAction.SET_MODE}:{Mode.FIND_AND_BOOK}",
                     )
                 ],
             ]
@@ -226,7 +220,7 @@ class EditFlow(Flow):
             [
                 [
                     InlineKeyboardButton(
-                        str(num), callback_data=f"{FlowCategory.EDIT}:{EditFlowAction.SET_NUM_REVIEWS}:{num}"
+                        str(num), callback_data=f"{self._category}:{EditFlowAction.SET_NUM_REVIEWS}:{num}"
                     )
                     for num in range(MIN_REQUIRED_REVIEWS, MAX_REQUIRED_REVIEWS + 1)
                 ],
@@ -247,5 +241,5 @@ class EditFlow(Flow):
             await self.edit_menu(query, context)
             raise
 
-        self._bot_manager.start_bot(inst, context)
+        await self._bot_manager.start_bot(inst, context)
         await self.edit_menu(query, context, update_text=f"🔄 Бот #{bot_id} перезапущен")

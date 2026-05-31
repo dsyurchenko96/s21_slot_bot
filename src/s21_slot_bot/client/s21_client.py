@@ -23,7 +23,7 @@ from s21_slot_bot.client.consts import (
     X_EDU_ORG_UNIT_ID,
     X_EDU_PRODUCT_ID,
 )
-from s21_slot_bot.client.models import ContentType, Project, ProjectStatus, Tokens
+from s21_slot_bot.client.models import ContentType, Project, ProjectStatus, SlotsInfo, Tokens
 from s21_slot_bot.client.queries import (
     Q_BOOK,
     Q_GET_CUR_PROJECTS,
@@ -40,7 +40,7 @@ from s21_slot_bot.common.time import dt_to_isoz
 class School21Client:
     def __init__(self, config: S21ClientConfig):
         self._username = config.username
-        self._password = config.password.get_secret_value()
+        self._password = config.password
         self._timeout_sec = config.timeout_sec
 
         self._sess = requests.Session()
@@ -77,7 +77,7 @@ class School21Client:
         action_url = self._extract_login_action(auth_resp.text, AUTH_URL)
         action_resp = self._sess.post(
             action_url,
-            data={"username": self._username, "password": self._password},
+            data={"username": self._username, "password": self._password.get_secret_value()},
             allow_redirects=True,
             timeout=self._timeout_sec,
         )
@@ -171,9 +171,7 @@ class School21Client:
         except Exception as e:
             self._raise_parsing_error(operation_name, e, data)
 
-    def get_timeslots(
-        self, task_id: str, from_dt: datetime, to_dt: datetime, logger: LoggerLike
-    ) -> tuple[list[dict[str, Any]], int]:
+    def get_slots_info(self, task_id: str, from_dt: datetime, to_dt: datetime, logger: LoggerLike) -> SlotsInfo:
         from_iso_z, to_iso_z = dt_to_isoz(from_dt), dt_to_isoz(to_dt)
         operation_name = "calendarGetNameLessStudentTimeslotsForReview"
         data = self._graphql(
@@ -181,21 +179,21 @@ class School21Client:
         )
         try:
             review_data = data["student"]["getNameLessStudentTimeslotsForReview"]
-            timeslots = review_data.get("timeSlots") or []
-            booked = int(review_data["projectReviewsInfo"]["relevantReviewByStudentsCount"])
-            logger.info("Received %d slots, %d booked", len(timeslots), booked)
-            return timeslots, booked
+            slots_info = SlotsInfo.model_validate(review_data)
+            logger.info("Received %d slots, %d booked", len(slots_info.time_slots), slots_info.review_info.booked)
+            return slots_info
         except Exception as e:
             self._raise_parsing_error(operation_name, e, data)
 
     def book(
         self,
         answer_id: str,
-        start_time_iso_z: str,
+        start_time_dt: datetime,
         staff_slot: bool,
         logger: LoggerLike,
         is_online: bool = True,
     ) -> str:
+        start_time_iso_z = dt_to_isoz(start_time_dt)
         operation_name = "calendarAddBookingToEventSlot"
         data = self._graphql(
             operation_name,
@@ -268,7 +266,11 @@ class School21Client:
             ) from e
 
         data = resp.json()
-        logger.debug("Received response from operation `%s`: %s", operation_name, data)
+        logger.debug(
+            "Received response from operation `%s`: %s",
+            operation_name,
+            json.dumps(data, indent=2, ensure_ascii=False),
+        )
 
         if data.get("errors"):
             raise School21Error(

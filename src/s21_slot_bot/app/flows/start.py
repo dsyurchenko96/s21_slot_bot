@@ -43,8 +43,10 @@ class StartFlowAction(FlowAction):
 
 
 class StartFlow(Flow):
-    def __init__(self, s21_client: School21Client, bot_manager: BotManager, messenger: Messenger):
-        super().__init__(s21_client, bot_manager, messenger)
+    def __init__(
+        self, s21_client: School21Client, bot_manager: BotManager, messenger: Messenger, category: FlowCategory
+    ):
+        super().__init__(s21_client, bot_manager, messenger, category)
         self._action_to_method: dict[
             StartFlowAction, Callable[[Update | CallbackQuery, CustomContext], Coroutine[Any, Any, None]]
         ] = {
@@ -83,19 +85,15 @@ class StartFlow(Flow):
                 context.chat_data.start_required_reviews = num_reviews
                 await self.pick_from(query, context)
             case StartFlowAction.PICK_FROM:
-                now = datetime.now(tz=self._bot_manager.bot_config.timezone)
-                from_choice = str_to_dt_with_from(
-                    callback_data.pop(), self._bot_manager.bot_config.timezone, now, logger
-                )
+                now = datetime.now(tz=context.bot.defaults.tzinfo)
+                from_choice = str_to_dt_with_from(callback_data.pop(), context.bot.defaults.tzinfo, now, logger)
                 context.chat_data.start_from = from_choice
                 await self.pick_to(query, context)
             case StartFlowAction.PICK_TO:
                 from_dt = context.chat_data.start_from
                 if not from_dt:
                     raise InternalError("начальное время поиска не задано", location=context.chat_data.model_dump())
-                to_choice = str_to_dt_with_from(
-                    callback_data.pop(), self._bot_manager.bot_config.timezone, from_dt, logger
-                )
+                to_choice = str_to_dt_with_from(callback_data.pop(), context.bot.defaults.tzinfo, from_dt, logger)
                 context.chat_data.start_to = to_choice
                 await self.confirm(query, context)
             case StartFlowAction.CONFIRM:
@@ -146,7 +144,7 @@ class StartFlow(Flow):
                 [
                     InlineKeyboardButton(
                         f"{project.name} ({project.id})",
-                        callback_data=f"{FlowCategory.START}:{StartFlowAction.PICK_PROJECT}:{project.id}",
+                        callback_data=f"{self._category}:{StartFlowAction.PICK_PROJECT}:{project.id}",
                     )
                 ]
                 for project in projects[:20]
@@ -163,13 +161,13 @@ class StartFlow(Flow):
             [
                 InlineKeyboardButton(
                     "🔎 Искать слоты",
-                    callback_data=f"{FlowCategory.START}:{action}:{Mode.ONLY_FIND}",
+                    callback_data=f"{self._category}:{action}:{Mode.ONLY_FIND}",
                 )
             ],
             [
                 InlineKeyboardButton(
                     "✅ Записаться",
-                    callback_data=f"{FlowCategory.START}:{action}:{Mode.FIND_AND_BOOK}",
+                    callback_data=f"{self._category}:{action}:{Mode.FIND_AND_BOOK}",
                 )
             ],
         ]
@@ -179,7 +177,7 @@ class StartFlow(Flow):
                 [
                     InlineKeyboardButton(
                         "⏪ Назад",
-                        callback_data=f"{FlowCategory.START}:{StartFlowAction.BACK}:{StartFlowAction.LIST_PROJECTS}",
+                        callback_data=f"{self._category}:{StartFlowAction.BACK}:{StartFlowAction.LIST_PROJECTS}",
                     )
                 ]
             )
@@ -195,13 +193,13 @@ class StartFlow(Flow):
         kb = InlineKeyboardMarkup(
             [
                 [
-                    InlineKeyboardButton(str(num), callback_data=f"{FlowCategory.START}:{action}:{num}")
+                    InlineKeyboardButton(str(num), callback_data=f"{self._category}:{action}:{num}")
                     for num in range(MIN_REQUIRED_REVIEWS, MAX_REQUIRED_REVIEWS + 1)
                 ],
                 [
                     InlineKeyboardButton(
                         "⏪ Назад",
-                        callback_data=f"{FlowCategory.START}:{StartFlowAction.BACK}:{StartFlowAction.PICK_MODE}",
+                        callback_data=f"{self._category}:{StartFlowAction.BACK}:{StartFlowAction.PICK_MODE}",
                     )
                 ],
             ]
@@ -222,14 +220,14 @@ class StartFlow(Flow):
         kb = InlineKeyboardMarkup(
             [
                 [
-                    InlineKeyboardButton("сейчас", callback_data=f"{FlowCategory.START}:{action}:PT0S"),
-                    InlineKeyboardButton("+30м", callback_data=f"{FlowCategory.START}:{action}:PT30M"),
-                    InlineKeyboardButton("+1ч", callback_data=f"{FlowCategory.START}:{action}:PT1H"),
+                    InlineKeyboardButton("сейчас", callback_data=f"{self._category}:{action}:PT0S"),
+                    InlineKeyboardButton("+30м", callback_data=f"{self._category}:{action}:PT30M"),
+                    InlineKeyboardButton("+1ч", callback_data=f"{self._category}:{action}:PT1H"),
                 ],
                 [
                     InlineKeyboardButton(
                         "⏪ Назад",
-                        callback_data=f"{FlowCategory.START}:{StartFlowAction.BACK}:{prev_action}",
+                        callback_data=f"{self._category}:{StartFlowAction.BACK}:{prev_action}",
                     )
                 ],
             ]
@@ -244,8 +242,8 @@ class StartFlow(Flow):
         logger = get_user_input_logger(update)
         logger.info("Parsing custom search start time...")
         try:
-            now = datetime.now(tz=self._bot_manager.bot_config.timezone)
-            start_from = str_to_dt_with_from(update.message.text, self._bot_manager.bot_config.timezone, now, logger)
+            now = datetime.now(tz=context.bot.defaults.tzinfo)
+            start_from = str_to_dt_with_from(update.message.text, context.bot.defaults.tzinfo, now, logger)
             context.chat_data.start_from = start_from
         except InvalidUserInputError as e:
             await self.pick_from(update, context)
@@ -261,13 +259,13 @@ class StartFlow(Flow):
         kb = InlineKeyboardMarkup(
             [
                 [
-                    InlineKeyboardButton(f"+{hour}ч", callback_data=f"{FlowCategory.START}:{action}:PT{hour}H")
+                    InlineKeyboardButton(f"+{hour}ч", callback_data=f"{self._category}:{action}:PT{hour}H")
                     for hour in [1, 2, 4, 8, 12]
                 ],
                 [
                     InlineKeyboardButton(
                         "⏪ Назад",
-                        callback_data=f"{FlowCategory.START}:{StartFlowAction.BACK}:{StartFlowAction.PICK_FROM}",
+                        callback_data=f"{self._category}:{StartFlowAction.BACK}:{StartFlowAction.PICK_FROM}",
                     )
                 ],
             ]
@@ -285,9 +283,7 @@ class StartFlow(Flow):
             start_from = context.chat_data.start_from
             if not start_from:
                 raise InternalError("начальное время поиска не задано", location=context.chat_data.model_dump())
-            start_to = str_to_dt_with_from(
-                update.message.text, self._bot_manager.bot_config.timezone, start_from, logger
-            )
+            start_to = str_to_dt_with_from(update.message.text, context.bot.defaults.tzinfo, start_from, logger)
             if start_to <= start_from:
                 raise InvalidUserInputError(f"конечное время должно быть позже начального ({dt_to_pretty(start_to)})")
             context.chat_data.start_to = start_to
@@ -305,18 +301,18 @@ class StartFlow(Flow):
 
         kb = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("🚀 старт", callback_data=f"{FlowCategory.START}:{action}")],
+                [InlineKeyboardButton("🚀 старт", callback_data=f"{self._category}:{action}")],
                 [
                     InlineKeyboardButton(
                         "⏪ Назад",
-                        callback_data=f"{FlowCategory.START}:{StartFlowAction.BACK}:{StartFlowAction.PICK_TO}",
+                        callback_data=f"{self._category}:{StartFlowAction.BACK}:{StartFlowAction.PICK_TO}",
                     )
                 ],
             ]
         )
         text = (
             self._get_chosen_project_info_text(action, context)
-            + f"активных ботов: {len(self._bot_manager.running())} / максимум {self._bot_manager.bot_config.max_bots}"
+            + f"активных ботов: {len(self._bot_manager.running())} / максимум {self._bot_manager.max_bots}"
         )
         await self._messenger.render_menu_message(context, text, kb=kb)
 
@@ -335,14 +331,14 @@ class StartFlow(Flow):
             required_reviews=context.chat_data.start_required_reviews,
             from_dt=context.chat_data.start_from,
             to_dt=context.chat_data.start_to,
-            interval_sec=self._bot_manager.bot_config.poll_interval_sec,
+            interval_sec=self._bot_manager.poll_interval_sec,
             mode=context.chat_data.start_mode,
         )
 
         inst = BotInstance(cfg=cfg)
         text += f"✅ Запускаю бота #{bot_id}"
         await self._messenger.render_menu_message(context, text)
-        self._bot_manager.start_bot(inst, context)
+        await self._bot_manager.start_bot(inst, context)
         logger.info("Started bot #%s", bot_id)
 
     def _get_chosen_project_info_text(self, action: StartFlowAction, context: CustomContext) -> str:

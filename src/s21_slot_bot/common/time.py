@@ -1,5 +1,4 @@
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, tzinfo
 
 import pydantic
 from pydantic import AwareDatetime, TypeAdapter
@@ -16,7 +15,7 @@ def dt_to_pretty(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def str_to_dt(text: str, tz: ZoneInfo, logger: LoggerLike, log_level: LogLevel = LogLevel.ERROR) -> datetime:
+def str_to_dt(text: str, tz: tzinfo, logger: LoggerLike, log_level: LogLevel = LogLevel.ERROR) -> datetime:
     try:
         dt = TypeAdapter(datetime).validate_strings(text)
     except pydantic.ValidationError as e:
@@ -29,7 +28,7 @@ def str_to_dt(text: str, tz: ZoneInfo, logger: LoggerLike, log_level: LogLevel =
     return dt
 
 
-def str_to_dt_with_from(text: str, tz: ZoneInfo, from_dt: AwareDatetime, logger: LoggerLike) -> datetime:
+def str_to_dt_with_from(text: str, tz: tzinfo, from_dt: AwareDatetime, logger: LoggerLike) -> datetime:
     try:
         dt_to = str_to_dt(text, tz, logger, log_level=LogLevel.INFO)
         return dt_to

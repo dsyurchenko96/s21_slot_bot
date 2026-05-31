@@ -17,6 +17,10 @@ class LogLevel(IntEnum):
     ERROR = logging.ERROR
     CRITICAL = logging.CRITICAL
 
+    @classmethod
+    def from_str(cls, value: str) -> "LogLevel":
+        return getattr(cls, value.upper(), cls.INFO)
+
 
 class LogEntity(StrEnum):
     BOT = enum.auto()

@@ -22,13 +22,13 @@ class StopFlow(Flow):
             case StopFlowAction.STOP_MENU:
                 await self.stop_menu(query, context)
             case StopFlowAction.STOP_ALL:
-                self._bot_manager.stop_all()
+                self._bot_manager.stop_all(context)
                 await self._messenger.render_menu_message(context, "⛔ все боты остановлены")
             case StopFlowAction.PICK_ONE:
                 await self.stop_pick_one(query, context)
             case StopFlowAction.STOP_ONE:
                 bot_id = callback_data.pop()
-                ok = self._bot_manager.stop_bot(bot_id)
+                ok = self._bot_manager.stop_bot(bot_id, context)
                 text = f"⛔ бот #{bot_id} остановлен" if ok else f"⚠️ бот #{bot_id} не найден"
                 await self._messenger.render_menu_message(context, text)
             case _:
@@ -44,12 +44,12 @@ class StopFlow(Flow):
             [
                 [
                     InlineKeyboardButton(
-                        "🛑 остановить всех", callback_data=f"{FlowCategory.STOP}:{StopFlowAction.STOP_ALL}"
+                        "🛑 остановить всех", callback_data=f"{self._category}:{StopFlowAction.STOP_ALL}"
                     )
                 ],
                 [
                     InlineKeyboardButton(
-                        "🛑 остановить одного", callback_data=f"{FlowCategory.STOP}:{StopFlowAction.PICK_ONE}"
+                        "🛑 остановить одного", callback_data=f"{self._category}:{StopFlowAction.PICK_ONE}"
                     )
                 ],
             ]
@@ -65,7 +65,7 @@ class StopFlow(Flow):
                 [
                     InlineKeyboardButton(
                         f"🛑 #{b.cfg.bot_id} — {b.cfg.project_name}",
-                        callback_data=f"{FlowCategory.STOP}:{StopFlowAction.STOP_ONE}:{b.cfg.bot_id}",
+                        callback_data=f"{self._category}:{StopFlowAction.STOP_ONE}:{b.cfg.bot_id}",
                     )
                 ]
                 for b in bots[:20]

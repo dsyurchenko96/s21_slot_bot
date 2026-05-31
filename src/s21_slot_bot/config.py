@@ -1,13 +1,24 @@
-from pydantic import Field, SecretStr
+from typing import Any
+from zoneinfo import ZoneInfo
+
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings
 
 from s21_slot_bot.app.config import BotConfig
 from s21_slot_bot.client.config import S21ClientConfig
 from s21_slot_bot.common.logger import LogLevel
+from s21_slot_bot.logging_config import LogConfig
 
 
 class SlotBotServiceConfig(BaseSettings):
     s21: S21ClientConfig = Field(default_factory=S21ClientConfig)
     bot: BotConfig = Field(default_factory=BotConfig)
-    tg_token: SecretStr = Field(alias="TG_BOT_TOKEN")
-    log_level: LogLevel = Field(alias="LOG_LEVEL", default=LogLevel.INFO)
+    log: LogConfig = Field(default_factory=LogConfig)
+    tg_token: SecretStr = Field(
+        alias="TG_BOT_TOKEN", description="Token used for managing and accessing the telegram bot"
+    )
+    timezone: ZoneInfo = Field(
+        alias="TIMEZONE",
+        description="Timezone used for input processing (unless specified in user prompt) and output",
+        default=ZoneInfo("Europe/Moscow"),
+    )

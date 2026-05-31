@@ -1,7 +1,13 @@
+from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
+
+
+class ContentType(StrEnum):
+    APPLICATION_JSON = "application/json"
+    APPLICATION_FORM_URL_ENCODED = "application/x-www-form-urlencoded"
 
 
 class Tokens(BaseModel):
@@ -19,7 +25,11 @@ class ProjectStatus(StrEnum):
     COMPLETED = "COMPLETED"
 
 
-class Project(BaseModel):
+class S21Model(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+
+class Project(S21Model):
     id: int | None = Field(default=None, description="Project ID", alias="goalId")
     name: str = Field(description="Project name", alias="goalName")
     course_id: int | None = Field(default=None, description="Course ID", alias="localCourseId")
@@ -29,9 +39,25 @@ class Project(BaseModel):
 
     num_reviews: int | None = Field(default=None, description="Current number of reviews for this project")
 
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+class TimeSlot(S21Model):
+    start: datetime = Field(description="Start time of the available slot")
+    end: datetime = Field(description="End time of the available slot")
+    valid_start_times: list[datetime] = Field(
+        description="List of valid time slots that can be booked between start "
+        "and end time, considering the duration of the review"
+    )
+    staff_slot: bool = Field(description="Flag showing whether this is a staff or peer slot")
 
 
-class ContentType(StrEnum):
-    APPLICATION_JSON = "application/json"
-    APPLICATION_FORM_URL_ENCODED = "application/x-www-form-urlencoded"
+class ReviewInfo(S21Model):
+    needed: int = Field(description="Number of reviews needed for the project", alias="reviewByStudentCount")
+    booked: int = Field(
+        description="Number of reviews already booked for the project", alias="relevantReviewByStudentsCount"
+    )
+
+
+class SlotsInfo(S21Model):
+    check_duration: int = Field(description="Duration of a review in minutes")
+    review_info: ReviewInfo = Field(alias="projectReviewsInfo")
+    time_slots: list[TimeSlot]
