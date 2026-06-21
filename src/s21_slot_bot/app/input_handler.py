@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import suppress
 
@@ -98,7 +99,7 @@ class InputHandler:
                     return
                 await self._messenger.send(context, f"❌ ошибка обработки запроса телеграма: {error}")
             case MenuError():
-                await self._messenger.render_menu_error(context, error.to_pretty())
+                await self._messenger.render_menu_error(context, error.to_pretty(), logger)
             case Error():
                 await self._messenger.send(context, error.to_pretty())
             case _:

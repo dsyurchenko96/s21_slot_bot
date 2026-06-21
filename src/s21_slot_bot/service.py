@@ -14,7 +14,7 @@ from telegram.ext import (
 from s21_slot_bot.app.bot_manager import BotManager
 from s21_slot_bot.app.input_handler import InputHandler
 from s21_slot_bot.app.messenger import Messenger
-from s21_slot_bot.app.models import App, ChatData, CustomContext
+from s21_slot_bot.app.models import App, BotData, ChatData, CustomContext
 from s21_slot_bot.client.s21_client import School21Client
 from s21_slot_bot.config import SlotBotServiceConfig
 
@@ -52,7 +52,7 @@ class SlotBotService:
 
     def _build_tg_app(self, tg_app_builder: type[ApplicationBuilder], token: str, timezone: ZoneInfo) -> App:
         defaults = Defaults(tzinfo=timezone)
-        context_types = ContextTypes(context=CustomContext, chat_data=ChatData)
+        context_types = ContextTypes(context=CustomContext, bot_data=BotData, chat_data=ChatData)
         app = tg_app_builder().token(token).context_types(context_types).defaults(defaults).build()
         return app
 

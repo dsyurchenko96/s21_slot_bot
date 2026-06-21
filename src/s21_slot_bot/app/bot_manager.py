@@ -63,6 +63,10 @@ class BotManager:
     def running(self) -> list[BotInstance]:
         return [b for b in self.list_all() if b.state == Lifecycle.RUNNING]
 
+    def stop_all(self, context: CustomContext) -> None:
+        for inst in self.running():
+            self.stop_bot(inst.cfg.bot_id, context)
+
     def stop_bot(self, bot_id: str, context: CustomContext) -> bool:
         inst = self._bots.get(bot_id)
         if not inst:
@@ -86,10 +90,6 @@ class BotManager:
             return False
         inst = self._bots.pop(bot_id, None)
         return bool(inst)
-
-    def stop_all(self, context: CustomContext) -> None:
-        for inst in self.running():
-            self.stop_bot(inst.cfg.bot_id, context)
 
     async def start_bot(self, inst: BotInstance, context: CustomContext) -> None:
         cfg = inst.cfg
@@ -160,7 +160,7 @@ class BotManager:
                         inst.stats.attempts_success += 1
                         await self._messenger.send(
                             context,
-                            f"🔔 бот #{cfg.bot_id}: найден слот\n"
+                            f"🔔 бот #{cfg.bot_id} остановлен: найден слот\n"
                             f"проект: {cfg.project_name}\n"
                             f"начало: {dt_to_pretty(start_time)}\n",
                             # f"нужно ещё: {missing}/{cfg.required_reviews}",

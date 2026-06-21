@@ -1,9 +1,8 @@
-import asyncio
 import enum
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, PositiveInt
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, PositiveInt, TypeAdapter
 from telegram.ext import Application, CallbackContext, ExtBot, JobQueue
 
 from s21_slot_bot.app.consts import (
@@ -20,7 +19,11 @@ from s21_slot_bot.common.logger import LogEntity, LoggerAdapterID, get_id_logger
 type RequiredReviews = Annotated[PositiveInt, Field(ge=MIN_REQUIRED_REVIEWS, le=MAX_REQUIRED_REVIEWS)]
 type IntervalSec = Annotated[PositiveInt, Field(ge=MIN_INTERVAL_SEC, le=MAX_INTERVAL_SEC)]
 type NumBots = Annotated[PositiveInt, Field(ge=MIN_NUM_BOTS, le=MAX_NUM_BOTS)]
-type App = Application[ExtBot, CustomContext, dict, ChatData, dict, JobQueue[CustomContext]]
+
+type App = Application[ExtBot, CustomContext, dict, ChatData, BotData, JobQueue[CustomContext]]
+
+RequiredReviewsAdapter = TypeAdapter(RequiredReviews)
+IntervalSecAdapter = TypeAdapter(IntervalSec)
 
 
 class MenuButton(StrEnum):
@@ -116,11 +119,9 @@ class ChatData(BaseModel):
     screen: Screen = Screen.MENU
     menu_msg_id: int | None = None
     menu_error_msg_id: int | None = None
-    should_move_menu: bool = False
 
-    projects_map: dict[int, str] = {}
+    projects_map: dict[int, str] = Field(default_factory=dict)
     start_project_id: int | None = None
-    start_project_name: str | None = None
     start_required_reviews: RequiredReviews | None = None
     start_from: AwareDatetime | None = None
     start_to: AwareDatetime | None = None
@@ -129,7 +130,12 @@ class ChatData(BaseModel):
     edit_bot_id: str | None = None
 
 
-class CustomContext(CallbackContext[ExtBot, dict, ChatData, dict]):
+# NOTE: bot_data is not None on unhandled errors, unlike chat_data
+class BotData(BaseModel):
+    chat_should_move_menu: dict[int, bool] = Field(default_factory=dict)
+
+
+class CustomContext(CallbackContext[ExtBot, dict, ChatData, BotData]):
     """Wrapper around CallbackContext to pass a custom chat data model as a type parameter."""
 
     def __init__(

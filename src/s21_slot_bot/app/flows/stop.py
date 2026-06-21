@@ -1,4 +1,5 @@
 import enum
+from typing import override
 
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
 
@@ -16,6 +17,7 @@ class StopFlowAction(FlowAction):
 
 
 class StopFlow(Flow):
+    @override
     async def parse_callback(self, callback_data: list[str], query: CallbackQuery, context: CustomContext) -> None:
         action = callback_data.pop()
         match action:
