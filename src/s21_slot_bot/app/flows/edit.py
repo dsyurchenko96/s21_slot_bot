@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime
-from typing import override
+from typing import Any, Callable, Coroutine, cast, override
 
 import pydantic
 from pydantic import TypeAdapter
@@ -27,6 +27,7 @@ from s21_slot_bot.common.time import dt_to_pretty, parse_to_datetime
 
 
 class EditFlowAction(FlowAction):
+    LIST_BOTS = enum.auto()
     SHOW_MENU = enum.auto()
     PICK_BOT = enum.auto()
     MENU_FROM = enum.auto()
@@ -41,18 +42,31 @@ class EditFlowAction(FlowAction):
 
 
 class EditFlow(CustomInputFlow):
+    @property
+    def _action_to_method(
+        self,
+    ) -> dict[FlowAction, Callable[[Update | CallbackQuery, CustomContext], Coroutine[Any, Any, None]]]:
+        return {
+            EditFlowAction.LIST_BOTS: self.list_bots,
+            EditFlowAction.SHOW_MENU: self.edit_menu,
+        }
+
     @override
     @property
     def _action_to_screen(self) -> dict[FlowAction, Screen]:
         return {
             InputFlowAction.PICK_FROM: Screen.EDIT_WAIT_FROM,
             InputFlowAction.PICK_TO: Screen.EDIT_WAIT_TO,
-            EditFlowAction.PICK_INTERVAL: Screen.EDIT_WAIT_INTERVAL,
+            EditFlowAction.SET_INTERVAL: Screen.EDIT_WAIT_INTERVAL,
         }
 
     @override
     def _get_prev_action(self, action: FlowAction, context: CustomContext) -> FlowAction | None:
-        return EditFlowAction.SHOW_MENU
+        match action:
+            case EditFlowAction.SHOW_MENU:
+                return EditFlowAction.LIST_BOTS
+            case _:
+                return EditFlowAction.SHOW_MENU
 
     @override
     def _get_chosen_project_info_text(
@@ -61,10 +75,9 @@ class EditFlow(CustomInputFlow):
         bot_id = context.chat_data.edit_bot_id
         inst = self._bot_manager.get_bot(bot_id)
         c = inst.cfg
-        # update_text = update_text + "\n" if update_text else ""
         project_name = escape_str(c.project_name) if is_markdown else c.project_name
         text = (
-            f"✏️ бот #{c.bot_id}\n{project_name}\n"
+            f"✏️ бот #{c.bot_id} ({project_name})\n"
             f"окно: {dt_to_pretty(c.from_dt)} → {dt_to_pretty(c.to_dt)}\n"
             f"интервал: {c.interval_sec} секунд\n"
             f"режим: {c.mode.to_text()}\n"
@@ -78,8 +91,6 @@ class EditFlow(CustomInputFlow):
         logger = get_user_input_logger(query)
         action = callback_data.pop()
         match action:
-            case EditFlowAction.SHOW_MENU:
-                await self.edit_menu(query, context)
             case EditFlowAction.PICK_BOT:
                 bot_id = callback_data.pop()
                 context.chat_data.edit_bot_id = bot_id
@@ -141,8 +152,8 @@ class EditFlow(CustomInputFlow):
                 update_text = ""
                 if inst.cfg.interval_sec != interval:
                     self._bot_manager.stop_bot(bot_id, context)
-                    await self._bot_manager.start_bot(inst, context)
                     inst.cfg.interval_sec = interval
+                    await self._bot_manager.start_bot(inst, context)
                     update_text = "✅ интервал обновлен, бот перезапущен"
                 await self.edit_menu(query, context, update_text=update_text)
                 # context.chat_data.screen = Screen.EDIT_WAIT_INTERVAL
@@ -150,15 +161,21 @@ class EditFlow(CustomInputFlow):
                 # await self._messenger.render_menu_message(context, text)
             case EditFlowAction.RESTART:
                 await self.edit_restart(query, context)
+            case InputFlowAction.BACK:
+                prev_action = cast(FlowAction, callback_data.pop())
+                prev_method = self._action_to_method.get(prev_action)
+                if not prev_method:
+                    raise InvalidCallbackDataError("предыдущее действие не задано")
+                await prev_method(query, context)
             case _:
-                raise InvalidCallbackDataError
+                raise InvalidCallbackDataError(f"неподдерживаемое действие '{action}' при редактировании бота")
 
     async def list_bots(self, update: Update, context: CustomContext) -> None:
         logger = get_user_input_logger(update)
         logger.info("Listing bots...")
         bots = self._bot_manager.list_all()
         if not bots:
-            await self._messenger.render_menu_message(context, "нет ботов для изменения")
+            await self._messenger.render_menu_message(context, "🚫 нет ботов", logger)
             return
         kb = InlineKeyboardMarkup(
             [
@@ -171,40 +188,43 @@ class EditFlow(CustomInputFlow):
                 for b in bots[:20]
             ]
         )
-        await self._messenger.render_menu_message(context, "выбери бота:", kb=kb)
+        await self._messenger.render_menu_message(context, "выбери бота:", logger, kb=kb)
 
     async def edit_menu(
         self, user_input: Update | CallbackQuery, context: CustomContext, update_text: str = ""
     ) -> None:
         logger = get_user_input_logger(user_input)
         logger.info("Showing edit menu...")
-        text = self._get_chosen_project_info_text(context, is_markdown=True) + update_text
-        # text = update_text + (
-        #     f"✏️ бот #{c.bot_id}\n{c.project_name}\n"
-        #     f"окно: {dt_to_pretty(c.from_dt)} → {dt_to_pretty(c.to_dt)}\n"
-        #     f"интервал: {c.interval_sec} секунд\n"
-        #     f"режим: {c.mode.to_text()}\n"
-        #     f"количество проверок: {c.required_reviews}\n"
-        #     f"статус: {inst.state.to_text()}"
-        # )
-        kb = InlineKeyboardMarkup(
+        action = EditFlowAction.SHOW_MENU
+        prev_action = self._get_prev_action(action, context)
+        self._set_screen(action, context)
+        buttons = [
+            [InlineKeyboardButton("начальное время", callback_data=f"{self._category}:{EditFlowAction.MENU_FROM}")],
+            [InlineKeyboardButton("конечное время", callback_data=f"{self._category}:{EditFlowAction.MENU_TO}")],
+            [InlineKeyboardButton("режим", callback_data=f"{self._category}:{EditFlowAction.MENU_MODE}")],
             [
-                [InlineKeyboardButton("начальное время", callback_data=f"{self._category}:{EditFlowAction.MENU_FROM}")],
-                [InlineKeyboardButton("конечное время", callback_data=f"{self._category}:{EditFlowAction.MENU_TO}")],
-                [InlineKeyboardButton("режим", callback_data=f"{self._category}:{EditFlowAction.MENU_MODE}")],
+                InlineKeyboardButton(
+                    "количество проверок",
+                    callback_data=f"{self._category}:{EditFlowAction.MENU_NUM_REVIEWS}",
+                )
+            ],
+            [InlineKeyboardButton("интервал", callback_data=f"{self._category}:{EditFlowAction.PICK_INTERVAL}")],
+            [
+                InlineKeyboardButton("перезапустить", callback_data=f"{self._category}:{EditFlowAction.RESTART}"),
+            ],
+        ]
+        if prev_action:
+            buttons.append(
                 [
                     InlineKeyboardButton(
-                        "количество проверок",
-                        callback_data=f"{self._category}:{EditFlowAction.MENU_NUM_REVIEWS}",
+                        "⏪ Назад",
+                        callback_data=f"{self._category}:{InputFlowAction.BACK}:{prev_action}",
                     )
                 ],
-                [InlineKeyboardButton("интервал", callback_data=f"{self._category}:{EditFlowAction.PICK_INTERVAL}")],
-                [
-                    InlineKeyboardButton("перезапустить", callback_data=f"{self._category}:{EditFlowAction.RESTART}"),
-                ],
-            ]
-        )
-        await self._messenger.render_menu_message(context, text, kb=kb, parse_mode=ParseMode.MARKDOWN_V2)
+            )
+        kb = InlineKeyboardMarkup(buttons)
+        text = self._get_chosen_project_info_text(context, is_markdown=True) + update_text
+        await self._messenger.render_menu_message(context, text, logger, kb=kb, parse_mode=ParseMode.MARKDOWN_V2)
 
     def _set_from(self, text: str, context: CustomContext, logger: LoggerLike) -> None:
         logger.info("Editing custom search start time...")
@@ -220,12 +240,11 @@ class EditFlow(CustomInputFlow):
 
     async def edit_custom_from(self, update: Update, context: CustomContext) -> None:
         logger = get_user_input_logger(update)
-        try:
-            self._set_from(update.message.text, context, logger)
-        except Error:
-            # TODO: check necessity of explicit call
-            await self.edit_menu(update, context)
-            raise
+        # try:
+        self._set_from(update.message.text, context, logger)
+        # except Error:
+        #     await self.pick_from(update, context)
+        #     raise
         await self.edit_menu(update, context, update_text="✅ начальное время обновлено")
 
     def _set_to(self, text: str, context: CustomContext, logger: LoggerLike) -> None:
@@ -244,16 +263,16 @@ class EditFlow(CustomInputFlow):
 
     async def edit_custom_to(self, update: Update, context: CustomContext) -> None:
         logger = get_user_input_logger(update)
-        try:
-            self._set_to(update.message.text, context, logger)
-        except Error:
-            await self.edit_menu(update, context)
-            raise
+        # try:
+        self._set_to(update.message.text, context, logger)
+        # except Error:
+        #     await self.pick_to(update, context)
+        #     raise
         await self.edit_menu(update, context, update_text="✅ конечное время обновлено")
 
     async def edit_interval(
         self,
-        user_input: CallbackQuery,
+        user_input: CallbackQuery | Update,
         context: CustomContext,
     ) -> None:
         logger = get_user_input_logger(user_input)
@@ -263,7 +282,7 @@ class EditFlow(CustomInputFlow):
         self._set_screen(action, context)
         buttons = [
             [
-                InlineKeyboardButton(f"{seconds}с", callback_data=f"{self._category}:{action}:PT{seconds}S")
+                InlineKeyboardButton(f"{seconds}с", callback_data=f"{self._category}:{action}:{seconds}")
                 for seconds in [10, 20, 30, 60, 120]
             ],
         ]
@@ -281,7 +300,7 @@ class EditFlow(CustomInputFlow):
             self._get_chosen_project_info_text(context, action, is_markdown=True)
             + "выбери или введи новый интервал (в секундах):"
         )
-        await self._messenger.render_menu_message(context, text, kb=kb, parse_mode=ParseMode.MARKDOWN_V2)
+        await self._messenger.render_menu_message(context, text, logger, kb=kb, parse_mode=ParseMode.MARKDOWN_V2)
 
     async def edit_custom_interval(self, update: Update, context: CustomContext) -> None:
         logger = get_user_input_logger(update)
@@ -291,13 +310,13 @@ class EditFlow(CustomInputFlow):
             inst = self._bot_manager.get_bot(bot_id)
             interval_sec = IntervalSecAdapter.validate_strings(update.message.text)
         except pydantic.ValidationError as e:
-            await self.edit_menu(update, context)
+            # await self.edit_interval(update, context)
             raise InvalidUserInputError(
                 f"интервал может быть задан только от {MIN_INTERVAL_SEC} до {MAX_INTERVAL_SEC} секунд"
             ) from e
-        except Error:
-            await self.edit_menu(update, context)
-            raise
+        # except Error:
+        #     await self.edit_interval(update, context)
+        #     raise
         inst.cfg.interval_sec = interval_sec
         self._bot_manager.stop_bot(bot_id, context)
         await self._bot_manager.start_bot(inst, context)
@@ -343,14 +362,12 @@ class EditFlow(CustomInputFlow):
         logger = get_user_input_logger(query)
         bot_id = context.chat_data.edit_bot_id
         logger.info("Restarting bot `%s`...", bot_id)
-        try:
-            inst = self._bot_manager.get_bot(bot_id)
-            if inst.state == Lifecycle.RUNNING:
-                raise InvalidUserInputError(f"бот #{bot_id} уже активен", help_text="выбери другого бота")
-            self._bot_manager.check_bot_limits()
-        except Error:
-            await self.edit_menu(query, context)
-            raise
+        action = EditFlowAction.RESTART
+        self._set_screen(action, context)
+        inst = self._bot_manager.get_bot(bot_id)
+        if inst.state == Lifecycle.RUNNING:
+            raise InvalidUserInputError(f"бот #{bot_id} уже активен", help_text="выбери другого бота")
+        self._bot_manager.check_bot_limits()
 
         await self._bot_manager.start_bot(inst, context)
         await self.edit_menu(query, context, update_text=f"🔄 бот #{bot_id} перезапущен")

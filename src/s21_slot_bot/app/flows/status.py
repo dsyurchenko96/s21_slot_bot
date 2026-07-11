@@ -5,7 +5,7 @@ from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, 
 from telegram.constants import ParseMode
 
 from s21_slot_bot.app.flows.base import Flow, FlowAction
-from s21_slot_bot.app.models import BotInstance, CustomContext, FlowCategory
+from s21_slot_bot.app.models import BotInstance, CustomContext, FlowCategory, Lifecycle
 from s21_slot_bot.common.exceptions import InvalidCallbackDataError
 from s21_slot_bot.common.logger import get_user_input_logger
 from s21_slot_bot.common.strings import ensure_str, escape_str
@@ -24,16 +24,18 @@ class StatusFlow(Flow):
             case StatusFlowAction.SHOW:
                 await self.status_show(query, context)
             case _:
-                raise InvalidCallbackDataError
+                raise InvalidCallbackDataError(f"неподдерживаемое действие '{action}' при демонстрации статуса")
 
     # TODO: break down bot statuses based on project
     async def status_show(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
         logger = get_user_input_logger(user_input)
         logger.info("Showing status...")
-        running = len(self._bot_manager.running())
+        num_running_bots = len(self._bot_manager.list_all(state=Lifecycle.RUNNING))
+        num_total_bots = len(self._bot_manager.list_all())
         lines = [
             "📌 статус",
-            f"активных: {running}",
+            f"активных: {num_running_bots}",
+            f"всего: {num_total_bots}",
             f"максимум: {self._bot_manager.max_bots}",
             f"интервал: {self._bot_manager.poll_interval_sec} секунд",
         ]
@@ -49,7 +51,7 @@ class StatusFlow(Flow):
                 [InlineKeyboardButton("🔄 обновить", callback_data=f"{self._category}:{StatusFlowAction.SHOW}")],
             ]
         )
-        await self._messenger.render_menu_message(context, text, kb=kb, parse_mode=ParseMode.MARKDOWN_V2)
+        await self._messenger.render_menu_message(context, text, logger, kb=kb, parse_mode=ParseMode.MARKDOWN_V2)
 
     def _bot_line(self, inst: BotInstance, is_markdown: bool = False) -> str:
         c = inst.cfg

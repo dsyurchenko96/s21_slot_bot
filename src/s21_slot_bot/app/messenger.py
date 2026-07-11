@@ -9,7 +9,7 @@ from s21_slot_bot.common.markdown import MarkdownV2Escaper
 
 MAIN_MENU_KB = ReplyKeyboardMarkup(
     [
-        [MenuButton.START, MenuButton.STOP],
+        [MenuButton.START, MenuButton.STOP, MenuButton.DELETE],
         [MenuButton.EDIT, MenuButton.STATUS],
     ],
     resize_keyboard=True,
@@ -50,18 +50,16 @@ class Messenger:
         except telegram.error.BadRequest as e:
             logger.info("Not deleted message `%s`: `%s`", message_id, e)
 
-    async def delete(self, message_id: int) -> None:
-        await self._bot.delete_message(self._chat_id, message_id)
-
     async def render_menu_message(
         self,
         context: CustomContext,
         text: str,
+        logger: LoggerLike,
         kb: InlineKeyboardMarkup = InlineKeyboardMarkup([]),
         parse_mode: ParseMode | None = None,
     ) -> None:
-        if context.bot_data.chat_should_move_menu.get(self._chat_id) and context.chat_data.menu_msg_id:
-            await self.delete(context.chat_data.menu_msg_id)
+        if context.bot_data.chat_should_move_menu.get(self._chat_id):
+            await self.safe_delete(context.chat_data.menu_msg_id, logger)
             context.bot_data.chat_should_move_menu[self._chat_id] = False
             context.chat_data.menu_msg_id = None
 
@@ -97,8 +95,8 @@ class Messenger:
                 parse_mode=parse_mode,
             )
         except telegram.error.BadRequest as error:
-            if "message not modified" in error.message:
-                logger.info("No update has taken place: %s", error)
+            if "not modified" in error.message.lower():
+                logger.info("No update has taken place in menu error: %s", error)
                 return
             raise
 

@@ -2,7 +2,7 @@ import enum
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, PositiveInt, TypeAdapter
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, InstanceOf, PositiveInt, TypeAdapter
 from telegram.ext import Application, CallbackContext, ExtBot, JobQueue
 
 from s21_slot_bot.app.consts import (
@@ -29,6 +29,7 @@ IntervalSecAdapter = TypeAdapter(IntervalSec)
 class MenuButton(StrEnum):
     START = "▶️ Начать"
     STOP = "⛔ Остановить"
+    DELETE = "🗑️ Удалить"
     EDIT = "✏️ Изменить"
     STATUS = "📌 Статус"
 
@@ -48,6 +49,7 @@ class Lifecycle(StrEnum):
 class FlowCategory(StrEnum):
     START = enum.auto()
     STOP = enum.auto()
+    DELETE = enum.auto()
     EDIT = enum.auto()
     STATUS = enum.auto()
 
@@ -98,9 +100,6 @@ class BotInstance(BaseModel):
     cfg: BotConfig
     state: Lifecycle = Lifecycle.STOPPED
     stats: Stats = Field(default_factory=Stats)
-    # task: asyncio.Task | None = None
-
-    # model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def logger(self) -> LoggerAdapterID:
         return get_id_logger(LogEntity.BOT, self.cfg.bot_id)

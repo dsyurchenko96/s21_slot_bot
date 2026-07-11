@@ -42,7 +42,7 @@ class BotManager:
         return self._bot_config.poll_interval_sec
 
     def check_bot_limits(self) -> None:
-        if len(self.running()) >= self._bot_config.max_bots:
+        if len(self.list_all()) >= self._bot_config.max_bots:
             raise TooManyBotsError(f"Максимальное количество ботов превышено ({self._bot_config.max_bots})")
 
     def get_bot(self, bot_id: str | None) -> BotInstance:
@@ -51,21 +51,14 @@ class BotManager:
             raise BotNotFoundError(f"бот #{bot_id} не найден")
         return bot
 
-    def list_all(self) -> list[BotInstance]:
-        arr = [b for b in self._bots.values()]
+    def list_all(self, state: Lifecycle | None = None) -> list[BotInstance]:
+        arr = [b for b in self._bots.values() if not state or b.state == state]
 
         def key(x: BotInstance) -> tuple[int, int, str]:
             pr = {Lifecycle.RUNNING: 0, Lifecycle.STOPPED: 1}.get(x.state, 9)
             return pr, x.cfg.project_id, x.cfg.bot_id
 
         return sorted(arr, key=key)
-
-    def running(self) -> list[BotInstance]:
-        return [b for b in self.list_all() if b.state == Lifecycle.RUNNING]
-
-    def stop_all(self, context: CustomContext) -> None:
-        for inst in self.running():
-            self.stop_bot(inst.cfg.bot_id, context)
 
     def stop_bot(self, bot_id: str, context: CustomContext) -> bool:
         inst = self._bots.get(bot_id)
@@ -85,11 +78,22 @@ class BotManager:
             logger.info("Stopped job ID `%s`", job.name)
         return True
 
+    def stop_all(self, context: CustomContext) -> None:
+        for inst in self.list_all(state=Lifecycle.RUNNING):
+            self.stop_bot(inst.cfg.bot_id, context)
+
     def delete_bot(self, bot_id: str, context: CustomContext) -> bool:
         if not self.stop_bot(bot_id, context):
             return False
         inst = self._bots.pop(bot_id, None)
         return bool(inst)
+
+    def delete_all(self, context: CustomContext, state: Lifecycle | None = None) -> int:
+        deleted_counter = 0
+        for inst in self.list_all(state=state):
+            if self.delete_bot(inst.cfg.bot_id, context):
+                deleted_counter += 1
+        return deleted_counter
 
     async def start_bot(self, inst: BotInstance, context: CustomContext) -> None:
         cfg = inst.cfg
@@ -126,7 +130,10 @@ class BotManager:
         if datetime.now(tz=context.bot.defaults.tzinfo) >= cfg.to_dt:
             logger.info("Removing the current bot search due to expiration")
             self.delete_bot(inst.cfg.bot_id, context)
-            await self._messenger.send(context, f"⌛️ бот #{cfg.bot_id}: удален, окно поиска истекло")
+            await self._messenger.send(
+                context,
+                f"⌛️ бот #{cfg.bot_id} ({cfg.project_name}): удален, окно поиска истекло",
+            )
             return
 
         inst.stats.attempts_total += 1
@@ -134,7 +141,14 @@ class BotManager:
 
         try:
             slots_info = s21_client.get_slots_info(task_id, cfg.from_dt, cfg.to_dt, logger)
-            # TODO: check slots_info.review_info.needed (could be 2)
+            # TODO: move check to Start/EditFlow?
+            needed = slots_info.review_info.needed
+            if cfg.required_reviews > needed:
+                await self._messenger.send(
+                    context,
+                    f"📉 бот #{cfg.bot_id} ({cfg.project_name}): выставленное количество проверок ({cfg.required_reviews}) больше необходимого ({needed})",
+                )
+                cfg.required_reviews = needed
             already_booked = slots_info.review_info.booked
             currently_booked = inst.stats.currently_booked
             inst.stats.currently_booked = already_booked
@@ -145,8 +159,7 @@ class BotManager:
                 # TODO: output which review was cancelled
                 await self._messenger.send(
                     context,
-                    f"⚠️ бот #{cfg.bot_id} отменена проверка\n"
-                    f"проект: {cfg.project_name}\n"
+                    f"⚠️ бот #{cfg.bot_id} ({cfg.project_name}): отменена проверка\n"
                     f"нужно ещё: {missing}/{cfg.required_reviews}",
                 )
 
@@ -160,8 +173,7 @@ class BotManager:
                         inst.stats.attempts_success += 1
                         await self._messenger.send(
                             context,
-                            f"🔔 бот #{cfg.bot_id} остановлен: найден слот\n"
-                            f"проект: {cfg.project_name}\n"
+                            f"🔔 бот #{cfg.bot_id} ({cfg.project_name}) остановлен: найден слот\n"
                             f"начало: {dt_to_pretty(start_time)}\n",
                             # f"нужно ещё: {missing}/{cfg.required_reviews}",
                         )
@@ -180,8 +192,7 @@ class BotManager:
                     inst.stats.attempts_success += 1
                     await self._messenger.send(
                         context,
-                        f"✅ бот #{cfg.bot_id}: записался\n"
-                        f"проект: {cfg.project_name}\n"
+                        f"✅ бот #{cfg.bot_id} ({cfg.project_name}): записался\n"
                         f"начало: {dt_to_pretty(start_time)}\n"
                         f"проверок: {currently_booked}/{cfg.required_reviews}",
                     )
@@ -189,7 +200,7 @@ class BotManager:
             inst.stats.attempts_failed += 1
             logger.exception("Failed attempt %d running bot %s", inst.stats.attempts_failed, cfg.bot_id)
             if inst.stats.attempts_failed % self._bot_config.max_retries == 0:
-                raise BotRuntimeError(f"бот #{cfg.bot_id}: ошибка поиска") from e
+                raise BotRuntimeError(f"бот #{cfg.bot_id} ({cfg.project_name}): ошибка поиска") from e
 
     # # TODO: add exception propagation in task.add_done_callback
     # async def run_bot_loop(self, inst: BotInstance, context: CustomContext) -> None:

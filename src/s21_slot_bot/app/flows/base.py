@@ -59,6 +59,7 @@ class CustomInputFlow(Flow, ABC):
         prev_action = self._get_prev_action(action, context)
         # action = StartFlowAction.PICK_MODE
         # self._screen_set(context, Screen.START_PICK_MODE)
+        self._set_screen(action, context)
         buttons = [
             [
                 InlineKeyboardButton(
@@ -73,7 +74,7 @@ class CustomInputFlow(Flow, ABC):
                 )
             ],
         ]
-        if prev_action and len(context.chat_data.projects_map) > 1:
+        if prev_action:
             buttons.append(
                 [
                     InlineKeyboardButton(
@@ -84,7 +85,7 @@ class CustomInputFlow(Flow, ABC):
             )
         kb = InlineKeyboardMarkup(buttons)
         text = self._get_chosen_project_info_text(context, action, is_markdown=True) + "выбери режим:"
-        await self._messenger.render_menu_message(context, text, kb=kb, parse_mode=ParseMode.MARKDOWN_V2)
+        await self._messenger.render_menu_message(context, text, logger, kb=kb, parse_mode=ParseMode.MARKDOWN_V2)
 
     async def pick_num_reviews(
         self,
@@ -97,6 +98,7 @@ class CustomInputFlow(Flow, ABC):
         prev_action = self._get_prev_action(action, context)
         # action = StartFlowAction.PICK_NUM_REVIEWS
         # self._screen_set(context, Screen.START_PICK_NUM)
+        self._set_screen(action, context)
         buttons = [
             [
                 InlineKeyboardButton(str(num), callback_data=f"{self._category}:{action}:{num}")
@@ -114,7 +116,7 @@ class CustomInputFlow(Flow, ABC):
             )
         kb = InlineKeyboardMarkup(buttons)
         text = self._get_chosen_project_info_text(context, action, is_markdown=True) + "выбери количество проверок:"
-        await self._messenger.render_menu_message(context, text, kb=kb, parse_mode=ParseMode.MARKDOWN_V2)
+        await self._messenger.render_menu_message(context, text, logger, kb=kb, parse_mode=ParseMode.MARKDOWN_V2)
 
     async def pick_from(
         self,
@@ -155,7 +157,7 @@ class CustomInputFlow(Flow, ABC):
             "(или введи вручную в формате [YYYY-MM-DD] HH:MM[:SS] - "
             f"[поддерживаемые строковые форматы]({PYDANTIC_DATETIME_DOCS_URL})):"
         )
-        await self._messenger.render_menu_message(context, text, kb=kb, parse_mode=ParseMode.MARKDOWN_V2)
+        await self._messenger.render_menu_message(context, text, logger, kb=kb, parse_mode=ParseMode.MARKDOWN_V2)
 
     # @abstractmethod
     # async def custom_from(self, update: Update, context: CustomContext) -> None:
@@ -207,7 +209,7 @@ class CustomInputFlow(Flow, ABC):
             "(или введи вручную в формате [YYYY-MM-DD] HH:MM[:SS] - "
             f"[поддерживаемые строковые форматы]({PYDANTIC_DATETIME_DOCS_URL})):"
         )
-        await self._messenger.render_menu_message(context, text, kb=kb, parse_mode=ParseMode.MARKDOWN_V2)
+        await self._messenger.render_menu_message(context, text, logger, kb=kb, parse_mode=ParseMode.MARKDOWN_V2)
 
     # @abstractmethod
     # async def custom_to(self, update: Update, context: CustomContext) -> None:
@@ -230,9 +232,8 @@ class CustomInputFlow(Flow, ABC):
     # await self.confirm(update, context)
 
     def _set_screen(self, action: FlowAction, context: CustomContext) -> None:
-        screen = self._action_to_screen.get(action)
-        if screen:
-            context.chat_data.screen = screen
+        screen = self._action_to_screen.get(action) or Screen.MENU
+        context.chat_data.screen = screen
 
     @abstractmethod
     def _get_prev_action(self, action: FlowAction, context: CustomContext) -> FlowAction | None:

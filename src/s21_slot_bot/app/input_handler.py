@@ -9,7 +9,7 @@ from telegram.ext import Application
 
 from s21_slot_bot.app.bot_manager import BotManager
 from s21_slot_bot.app.flows.collector import FlowCollector
-from s21_slot_bot.app.messenger import Messenger
+from s21_slot_bot.app.messenger import MAIN_MENU_KB, Messenger
 from s21_slot_bot.app.models import App, CustomContext, FlowCategory, MenuButton, Screen
 from s21_slot_bot.client.s21_client import School21Client
 from s21_slot_bot.common.exceptions import Error, ForbiddenError, InvalidCallbackDataError, MenuError
@@ -31,6 +31,7 @@ class InputHandler:
         self._button_to_method = {
             MenuButton.START: self._flows.start.list_projects,
             MenuButton.STOP: self._flows.stop.stop_menu,
+            MenuButton.DELETE: self._flows.delete.delete_menu,
             MenuButton.EDIT: self._flows.edit.list_bots,
             MenuButton.STATUS: self._flows.status.status_show,
         }
@@ -42,10 +43,10 @@ class InputHandler:
             Screen.EDIT_WAIT_INTERVAL: self._flows.edit.edit_custom_interval,
         }
 
-    # async def cmd_start(self, update: Update, context: CustomContext) -> None:
-    #     self._validate_access(update)
-    #     context.chat_data.screen = Screen.MENU
-    #     await update.message.reply_text("Slot bot — меню", reply_markup=MAIN_MENU_KB)
+    async def cmd_start(self, update: Update, _: CustomContext) -> None:
+        self._validate_access(update)
+        await self._messenger.safe_delete(update.message.message_id)
+        message = await update.message.reply_text("Slot bot — меню", reply_markup=MAIN_MENU_KB)
 
     async def on_text(self, update: Update, context: CustomContext) -> None:
         self._validate_access(update)
@@ -63,8 +64,9 @@ class InputHandler:
             # await self._messenger.render_menu(context, "выбери действие в меню")
             # return
 
-        context.chat_data.screen = Screen.MENU
-        await self._messenger.render_menu_message(context, "обработка запроса...")
+        # context.chat_data.screen = Screen.MENU
+        if not context.chat_data.menu_msg_id:
+            await self._messenger.render_menu_message(context, "обработка запроса...", logger)
         await method(update, context)
         await self.on_success(update, context)
 
@@ -82,7 +84,7 @@ class InputHandler:
         try:
             category = FlowCategory(callback_data.pop())
             flow = self._flows.get_flow(category)
-            context.chat_data.screen = Screen.MENU
+            # context.chat_data.screen = Screen.MENU
             await flow.parse_callback(callback_data, query, context)
             await self.on_success(update, context)
         # TODO: catch errors in flows and reraise them as only InvalidCallbackDataError?
@@ -94,8 +96,8 @@ class InputHandler:
         error = context.error
         match error:
             case telegram.error.BadRequest():
-                if "message not modified" in error.message:
-                    logger.info("No update has taken place: %s", error)
+                if "not modified" in error.message.lower():
+                    logger.info("No update has taken place in error handle: %s", error)
                     return
                 await self._messenger.send(context, f"❌ ошибка обработки запроса телеграма: {error}")
             case MenuError():

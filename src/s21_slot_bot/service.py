@@ -58,7 +58,7 @@ class SlotBotService:
 
     def _wire_app_handlers(self):
         # TODO: check in a new chat
-        # app.add_handler(CommandHandler("start", input_handler.cmd_start))
+        self._tg_app.add_handler(CommandHandler("start", self._input_handler.cmd_start))
         self._tg_app.add_handler(CallbackQueryHandler(self._input_handler.on_callback))
         self._tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._input_handler.on_text))
         self._tg_app.add_error_handler(self._input_handler.on_error)
