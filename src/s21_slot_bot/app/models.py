@@ -8,15 +8,13 @@ from telegram.ext import Application, CallbackContext, ExtBot, JobQueue
 from s21_slot_bot.app.consts import (
     MAX_INTERVAL_SEC,
     MAX_NUM_BOTS,
-    MAX_REQUIRED_REVIEWS,
     MIN_INTERVAL_SEC,
     MIN_NUM_BOTS,
-    MIN_REQUIRED_REVIEWS,
 )
+from s21_slot_bot.client.models import ProjectExtended, RequiredReviews
 from s21_slot_bot.client.s21_client import School21Client
 from s21_slot_bot.common.logger import LogEntity, LoggerAdapterID, get_id_logger
 
-type RequiredReviews = Annotated[PositiveInt, Field(ge=MIN_REQUIRED_REVIEWS, le=MAX_REQUIRED_REVIEWS)]
 type IntervalSec = Annotated[PositiveInt, Field(ge=MIN_INTERVAL_SEC, le=MAX_INTERVAL_SEC)]
 type NumBots = Annotated[PositiveInt, Field(ge=MIN_NUM_BOTS, le=MAX_NUM_BOTS)]
 
@@ -52,6 +50,7 @@ class FlowCategory(StrEnum):
     DELETE = enum.auto()
     EDIT = enum.auto()
     STATUS = enum.auto()
+    BOOK = enum.auto()
 
 
 class Mode(StrEnum):
@@ -82,12 +81,13 @@ class Stats(BaseModel):
     attempts_total: PositiveInt = 0
     attempts_success: PositiveInt = 0
     attempts_failed: PositiveInt = 0
+    failed_retry: PositiveInt = 0
     currently_booked: PositiveInt = 0
 
 
-class BotConfig(BaseModel):
+class SearchConfig(BaseModel):
     bot_id: str
-    project_id: PositiveInt
+    project_id: str
     project_name: str
     required_reviews: RequiredReviews
     from_dt: AwareDatetime
@@ -97,12 +97,12 @@ class BotConfig(BaseModel):
 
 
 class BotInstance(BaseModel):
-    cfg: BotConfig
+    cfg: SearchConfig
     state: Lifecycle = Lifecycle.STOPPED
     stats: Stats = Field(default_factory=Stats)
 
     def logger(self) -> LoggerAdapterID:
-        return get_id_logger(LogEntity.BOT, self.cfg.bot_id)
+        return get_id_logger(LogEntity.BOT, entity_id=self.cfg.bot_id)
 
 
 class JobData(BaseModel):
@@ -119,8 +119,8 @@ class ChatData(BaseModel):
     menu_msg_id: int | None = None
     menu_error_msg_id: int | None = None
 
-    projects_map: dict[int, str] = Field(default_factory=dict)
-    start_project_id: int | None = None
+    projects_map: dict[str, ProjectExtended] = Field(default_factory=dict)
+    start_project_id: str | None = None
     start_required_reviews: RequiredReviews | None = None
     start_from: AwareDatetime | None = None
     start_to: AwareDatetime | None = None

@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 PYDANTIC_DATETIME_DOCS_URL = (
     "https://pydantic.dev/docs/validation/2.0/usage/types/datetime/#validation-of-datetime-types"
 )
@@ -5,8 +7,8 @@ PYDANTIC_DATETIME_DOCS_URL = (
 MIN_INTERVAL_SEC = 10
 MAX_INTERVAL_SEC = 3600
 
-MIN_REQUIRED_REVIEWS = 1
-MAX_REQUIRED_REVIEWS = 3
-
 MIN_NUM_BOTS = 1
 MAX_NUM_BOTS = 10
+
+CURRENT_BOOKINGS_SEARCH_WINDOW = timedelta(weeks=3)
+UPCOMING_REVIEW_REMINDER_WINDOW = timedelta(minutes=15)

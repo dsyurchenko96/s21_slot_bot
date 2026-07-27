@@ -1,20 +1,12 @@
-import enum
 from typing import override
 
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
 
-from s21_slot_bot.app.consts import MAX_NUM_BOTS
-from s21_slot_bot.app.flows.base import Flow, FlowAction
-from s21_slot_bot.app.models import CustomContext, FlowCategory, Lifecycle
-from s21_slot_bot.common.exceptions import InvalidCallbackDataError
+from s21_slot_bot.app.errors import InvalidCallbackDataError
+from s21_slot_bot.app.flows.actions import DeleteFlowAction
+from s21_slot_bot.app.flows.base import Flow
+from s21_slot_bot.app.models import CustomContext, Lifecycle
 from s21_slot_bot.common.logger import get_user_input_logger
-
-
-class DeleteFlowAction(FlowAction):
-    DELETE_MENU = enum.auto()
-    DELETE_ONE = enum.auto()
-    DELETE_ALL = enum.auto()
-    DELETE_ALL_STOPPED = enum.auto()
 
 
 class DeleteFlow(Flow):
@@ -25,15 +17,15 @@ class DeleteFlow(Flow):
         match action:
             case DeleteFlowAction.DELETE_ONE:
                 bot_id = callback_data.pop()
-                ok = self._bot_manager.delete_bot(bot_id, context)
+                ok = self._bot_manager.delete_bot(bot_id, context, logger)
                 text = f"🗑️ бот #{bot_id} удален" if ok else f"⚠️ бот #{bot_id} не найден"
                 await self._messenger.render_menu_message(context, text, logger)
             case DeleteFlowAction.DELETE_ALL:
-                num_deleted = self._bot_manager.delete_all(context)
+                num_deleted = self._bot_manager.delete_all(context, logger)
                 text = f"🗑️ удалено ботов: {num_deleted}" if num_deleted else "⚠️ не найдено ботов для удаления"
                 await self._messenger.render_menu_message(context, text, logger)
             case DeleteFlowAction.DELETE_ALL_STOPPED:
-                num_deleted = self._bot_manager.delete_all(context, state=Lifecycle.STOPPED)
+                num_deleted = self._bot_manager.delete_all(context, logger, state=Lifecycle.STOPPED)
                 text = f"🗑️ удалено ботов: {num_deleted}" if num_deleted else "⚠️ не найдено ботов для удаления"
                 await self._messenger.render_menu_message(context, text, logger)
             case _:

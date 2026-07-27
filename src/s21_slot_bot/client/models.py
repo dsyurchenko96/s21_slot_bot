@@ -1,8 +1,28 @@
 from datetime import datetime
 from enum import StrEnum
+from typing import Annotated
+from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    AfterValidator,
+    AliasPath,
+    AwareDatetime,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    NonNegativeInt,
+    PositiveInt,
+)
 from pydantic.alias_generators import to_camel
+from pydantic_core.core_schema import ValidationInfo
+
+from s21_slot_bot.client.consts import MAX_REQUIRED_REVIEWS
+
+type CoercedStr = Annotated[str, BeforeValidator(lambda val: str(val) if isinstance(val, int) else val)]
+
+type RequiredReviews = Annotated[PositiveInt, Field(le=MAX_REQUIRED_REVIEWS)]
+type BookedReviews = Annotated[NonNegativeInt, Field(le=MAX_REQUIRED_REVIEWS)]
 
 
 class ContentType(StrEnum):
@@ -30,20 +50,22 @@ class S21Model(BaseModel):
 
 
 class Project(S21Model):
-    id: int | None = Field(default=None, description="Project ID", alias="goalId")
+    id: CoercedStr | None = Field(default=None, description="Project ID", alias="goalId")
     name: str = Field(description="Project name", alias="goalName")
-    course_id: int | None = Field(default=None, description="Course ID", alias="localCourseId")
+    course_id: CoercedStr | None = Field(default=None, description="Course ID", alias="localCourseId")
     status: ProjectStatus | None = Field(
         default=None, description="Current project status", alias="displayedCourseStatus"
     )
 
-    num_reviews: int | None = Field(default=None, description="Current number of reviews for this project")
+
+class ProjectExtended(Project):
+    review_info: ReviewInfo
 
 
 class TimeSlot(S21Model):
-    start: datetime = Field(description="Start time of the available slot")
-    end: datetime = Field(description="End time of the available slot")
-    valid_start_times: list[datetime] = Field(
+    start: AwareDatetime = Field(description="Start time of the available slot")
+    end: AwareDatetime = Field(description="End time of the available slot")
+    valid_start_times: list[AwareDatetime] = Field(
         description="List of valid time slots that can be booked between start "
         "and end time, considering the duration of the review"
     )
@@ -51,10 +73,32 @@ class TimeSlot(S21Model):
 
 
 class ReviewInfo(S21Model):
-    needed: int = Field(description="Number of reviews needed for the project", alias="reviewByStudentCount")
-    booked: int = Field(
+    required: RequiredReviews = Field(
+        description="Number of reviews required for the project", alias="reviewByStudentCount"
+    )
+    booked: BookedReviews = Field(
         description="Number of reviews already booked for the project", alias="relevantReviewByStudentsCount"
     )
+
+
+class BookingBase(S21Model):
+    answer_id: str = Field(description="ID required to book a slot for a given project")
+    project_id: str = Field(description="Project ID", validation_alias=AliasPath("task", "goalId"))
+    project_name: str = Field(description="Project name", validation_alias=AliasPath("task", "goalName"))
+    start: AwareDatetime = Field(
+        description="Start time of the booked slot", validation_alias=AliasPath("eventSlot", "start")
+    )
+
+
+class Booking(BookingBase):
+    id: str = Field(description="Booking ID")
+    is_online: bool = Field(default=True, description="Whether the review takes place online or not")
+    url: str | None = Field(default=None, description="URL of the online review call", alias="vcLinkUrl")
+
+
+class DryBooking(BookingBase):
+    dry_run_id: str = Field(description="Booking ID generated during a dry-run")
+    is_staff_slot: bool = Field(default=False, description="Whether the found slot was opened by staff or by a student")
 
 
 class SlotsInfo(S21Model):

@@ -8,26 +8,27 @@ from telegram import Update
 from telegram.ext import Application
 
 from s21_slot_bot.app.bot_manager import BotManager
+from s21_slot_bot.app.errors import ForbiddenError, InvalidCallbackDataError, MenuError
 from s21_slot_bot.app.flows.collector import FlowCollector
 from s21_slot_bot.app.messenger import MAIN_MENU_KB, Messenger
 from s21_slot_bot.app.models import App, CustomContext, FlowCategory, MenuButton, Screen
 from s21_slot_bot.client.s21_client import School21Client
-from s21_slot_bot.common.exceptions import Error, ForbiddenError, InvalidCallbackDataError, MenuError
-from s21_slot_bot.common.logger import get_service_hook_logger, get_user_input_logger
+from s21_slot_bot.common.error import Error
+from s21_slot_bot.common.logger import LogEntity, get_id_logger, get_user_input_logger
 
 
 class InputHandler:
     def __init__(
         self,
-        s21_client: School21Client,
         bot_manager: BotManager,
         messenger: Messenger,
+        flows: FlowCollector,
         chat_id: int,
     ):
         self._bot_manager = bot_manager
         self._messenger = messenger
+        self._flows = flows
         self._chat_id = chat_id
-        self._flows = FlowCollector(s21_client=s21_client, bot_manager=bot_manager, messenger=messenger)
         self._button_to_method = {
             MenuButton.START: self._flows.start.list_projects,
             MenuButton.STOP: self._flows.stop.stop_menu,
@@ -107,7 +108,7 @@ class InputHandler:
             case _:
                 await self._messenger.send(context, f"❌ неизвестная ошибка: {error}")
         if job := context.job:
-            self._bot_manager.stop_bot(job.name, context)
+            self._bot_manager.stop_bot(job.name, context, logger)
         logger.error("Exception while handling an update: %s", error, exc_info=error)
 
     async def on_success(self, update: Update, context: CustomContext) -> None:
@@ -116,7 +117,7 @@ class InputHandler:
         context.chat_data.menu_error_msg_id = None
 
     async def on_stop(self, application: App) -> None:
-        logger = get_service_hook_logger()
+        logger = get_id_logger(LogEntity.SERVICE_HOOK)
         logger.info("Running custom on-stop application hook...")
         chat_data = application.chat_data.get(self._chat_id)
         if chat_data:

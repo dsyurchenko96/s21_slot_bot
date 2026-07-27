@@ -2,7 +2,8 @@ from http import HTTPStatus
 
 import pytest
 
-from s21_slot_bot.common.exceptions import BotRuntimeError, School21Error
+from s21_slot_bot.app.errors import BotRuntimeError
+from s21_slot_bot.client.errors import School21Error
 
 
 class TestError:

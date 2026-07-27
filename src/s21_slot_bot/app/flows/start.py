@@ -1,45 +1,28 @@
-import enum
 from datetime import datetime
-from enum import StrEnum
 from typing import Any, Callable, Coroutine, cast, override
 
 from pydantic import TypeAdapter
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 
-from s21_slot_bot.app.bot_manager import BotManager
-from s21_slot_bot.app.consts import MAX_REQUIRED_REVIEWS, MIN_REQUIRED_REVIEWS
-from s21_slot_bot.app.flows.base import CustomInputFlow, Flow, FlowAction, InputFlowAction
-from s21_slot_bot.app.messenger import Messenger
+from s21_slot_bot.app.errors import InternalError, InvalidCallbackDataError, InvalidUserInputError, MenuError
+from s21_slot_bot.app.flows.actions import FlowAction, InputFlowAction, StartFlowAction
+from s21_slot_bot.app.flows.base import CustomInputFlow
 from s21_slot_bot.app.models import (
-    BotConfig,
     BotInstance,
     CustomContext,
-    FlowCategory,
-    Lifecycle,
     Mode,
     RequiredReviews,
     Screen,
+    SearchConfig,
 )
-from s21_slot_bot.client.s21_client import School21Client
-from s21_slot_bot.common.exceptions import (
-    InternalError,
-    InvalidCallbackDataError,
-    InvalidUserInputError,
-    MenuError,
-    School21Error,
-)
+from s21_slot_bot.client.consts import MIN_REQUIRED_REVIEWS
+from s21_slot_bot.client.errors import School21Error
+from s21_slot_bot.client.models import ProjectExtended
 from s21_slot_bot.common.logger import get_user_input_logger
 from s21_slot_bot.common.random import random_id
 from s21_slot_bot.common.strings import ensure_str, escape_str
 from s21_slot_bot.common.time import dt_to_pretty, parse_to_datetime
-
-
-class StartFlowAction(FlowAction):
-    LIST_PROJECTS = enum.auto()
-    PICK_PROJECT = enum.auto()
-    CONFIRM = enum.auto()
-    FINALIZE = enum.auto()
 
 
 class StartFlow(CustomInputFlow):
@@ -145,19 +128,21 @@ class StartFlow(CustomInputFlow):
         action = StartFlowAction.PICK_PROJECT
         self._set_screen(action, context)
         try:
-            user_id = self._s21_client.get_user_id(logger)
-            projects = self._s21_client.get_reviewed_projects(user_id, logger)
+            user_id, student_id = self._s21_client.get_user_and_student_id(logger)
+            projects_without_review_info = self._s21_client.get_reviewed_projects(user_id, logger)
+            if not projects_without_review_info:
+                await self._messenger.render_menu_message(context, "📭 нет активных проектов на проверке", logger)
+                return
+            projects: list[ProjectExtended] = []
+            for project in projects_without_review_info:
+                review_info = self._s21_client.get_review_info(project.id, student_id, logger)
+                projects.append(ProjectExtended.model_validate({**project.model_dump(), "review_info": review_info}))
         except School21Error as e:
-            raise MenuError(f"не удалось получить проекты: {e}") from e
+            raise MenuError(f"не удалось получить проекты: {e.message}") from e
             # await render_menu(user_input, context, text)
             # return
 
-        if not projects:
-            # raise MenuError("нет активных проектов на проверке")
-            await self._messenger.render_menu_message(context, "📭 нет активных проектов на проверке", logger)
-            return
-
-        context.chat_data.projects_map = {project.id: project.name for project in projects}
+        context.chat_data.projects_map = {project.id: project for project in projects}
 
         if len(projects) == 1:
             project = projects[0]
@@ -169,7 +154,7 @@ class StartFlow(CustomInputFlow):
             [
                 [
                     InlineKeyboardButton(
-                        f"{project.name} ({project.id})",
+                        f"{project.name} ({project.review_info.booked} / {project.review_info.required} проверок)",
                         callback_data=f"{self._category}:{action}:{project.id}",
                     )
                 ]
@@ -177,92 +162,6 @@ class StartFlow(CustomInputFlow):
             ]
         )
         await self._messenger.render_menu_message(context, "выбери проект:", logger, kb=kb)
-
-    # async def pick_mode(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
-    #     logger = get_user_input_logger(user_input)
-    #     logger.info("Picking mode...")
-    #     action = StartFlowAction.PICK_MODE
-    #     # self._screen_set(context, Screen.START_PICK_MODE)
-    #     buttons = [
-    #         [
-    #             InlineKeyboardButton(
-    #                 "🔎 Искать слоты",
-    #                 callback_data=f"{self._category}:{action}:{Mode.ONLY_FIND}",
-    #             )
-    #         ],
-    #         [
-    #             InlineKeyboardButton(
-    #                 "✅ Записаться",
-    #                 callback_data=f"{self._category}:{action}:{Mode.FIND_AND_BOOK}",
-    #             )
-    #         ],
-    #     ]
-    #     projects = context.chat_data.projects_map
-    #     if len(projects) > 1:
-    #         buttons.append(
-    #             [
-    #                 InlineKeyboardButton(
-    #                     "⏪ Назад",
-    #                     callback_data=f"{self._category}:{StartFlowAction.BACK}:{StartFlowAction.LIST_PROJECTS}",
-    #                 )
-    #             ]
-    #         )
-    #     kb = InlineKeyboardMarkup(buttons)
-    #     text = self._get_chosen_project_info_text(action, context) + "выбери режим:"
-    #     await self._messenger.render_menu_message(context, text, kb=kb)
-    #
-    # async def pick_num_reviews(self, query: CallbackQuery, context: CustomContext) -> None:
-    #     logger = get_user_input_logger(query)
-    #     logger.info("Picking number of reviews...")
-    #     action = StartFlowAction.PICK_NUM_REVIEWS
-    #     # self._screen_set(context, Screen.START_PICK_NUM)
-    #     kb = InlineKeyboardMarkup(
-    #         [
-    #             [
-    #                 InlineKeyboardButton(str(num), callback_data=f"{self._category}:{action}:{num}")
-    #                 for num in range(MIN_REQUIRED_REVIEWS, MAX_REQUIRED_REVIEWS + 1)
-    #             ],
-    #             [
-    #                 InlineKeyboardButton(
-    #                     "⏪ Назад",
-    #                     callback_data=f"{self._category}:{StartFlowAction.BACK}:{StartFlowAction.PICK_MODE}",
-    #                 )
-    #             ],
-    #         ]
-    #     )
-    #     text = self._get_chosen_project_info_text(action, context) + "выбери количество проверок:"
-    #     await self._messenger.render_menu_message(context, text, kb=kb)
-    #
-    # async def pick_from(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
-    #     logger = get_user_input_logger(user_input)
-    #     logger.info("Picking search start time...")
-    #     action = StartFlowAction.PICK_FROM
-    #     context.chat_data.screen = Screen.START_PICK_FROM
-    #     prev_action = (
-    #         StartFlowAction.PICK_NUM_REVIEWS
-    #         if context.chat_data.start_mode == Mode.FIND_AND_BOOK
-    #         else StartFlowAction.PICK_MODE
-    #     )
-    #     kb = InlineKeyboardMarkup(
-    #         [
-    #             [
-    #                 InlineKeyboardButton("сейчас", callback_data=f"{self._category}:{action}:PT0S"),
-    #                 InlineKeyboardButton("+30м", callback_data=f"{self._category}:{action}:PT30M"),
-    #                 InlineKeyboardButton("+1ч", callback_data=f"{self._category}:{action}:PT1H"),
-    #             ],
-    #             [
-    #                 InlineKeyboardButton(
-    #                     "⏪ Назад",
-    #                     callback_data=f"{self._category}:{StartFlowAction.BACK}:{prev_action}",
-    #                 )
-    #             ],
-    #         ]
-    #     )
-    #     text = (
-    #         self._get_chosen_project_info_text(action, context)
-    #         + "выбери начальное время поиска\n(или введи вручную в формате [YYYY-MM-DD] HH:MM[:SS]):"
-    #     )
-    #     await self._messenger.render_menu_message(context, text, kb=kb)
 
     async def custom_from(self, update: Update, context: CustomContext) -> None:
         logger = get_user_input_logger(update)
@@ -277,31 +176,6 @@ class StartFlow(CustomInputFlow):
 
         await self.pick_to(update, context)
 
-    # async def pick_to(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
-    #     logger = get_user_input_logger(user_input)
-    #     logger.info("Picking search end time...")
-    #     action = StartFlowAction.PICK_TO
-    #     context.chat_data.screen = Screen.START_PICK_TO
-    #     kb = InlineKeyboardMarkup(
-    #         [
-    #             [
-    #                 InlineKeyboardButton(f"+{hour}ч", callback_data=f"{self._category}:{action}:PT{hour}H")
-    #                 for hour in [1, 2, 4, 8, 12]
-    #             ],
-    #             [
-    #                 InlineKeyboardButton(
-    #                     "⏪ Назад",
-    #                     callback_data=f"{self._category}:{StartFlowAction.BACK}:{StartFlowAction.PICK_FROM}",
-    #                 )
-    #             ],
-    #         ]
-    #     )
-    #     text = (
-    #         self._get_chosen_project_info_text(action, context)
-    #         + "выбери конечное время поиска относительно начала\n(или введи вручную в формате [YYYY-MM-DD] HH:MM[:SS]):"
-    #     )
-    #     await self._messenger.render_menu_message(context, text, kb=kb)
-
     async def custom_to(self, update: Update, context: CustomContext) -> None:
         logger = get_user_input_logger(update)
         logger.info("Parsing custom search end time...")
@@ -311,7 +185,9 @@ class StartFlow(CustomInputFlow):
             raise InternalError("начальное время поиска не задано", location=context.chat_data.model_dump())
         start_to = parse_to_datetime(update.message.text, context.bot.defaults.tzinfo, start_from, logger)
         if start_to <= start_from:
-            raise InvalidUserInputError(f"конечное время должно быть позже начального ({dt_to_pretty(start_to)})")
+            raise InvalidUserInputError(
+                f"конечное время должно быть позже начального ({dt_to_pretty(start_to, tz=context.bot.defaults.tzinfo)})"
+            )
         context.chat_data.start_to = start_to
         # except InvalidUserInputError as e:
         #     await self.pick_to(update, context)
@@ -351,10 +227,10 @@ class StartFlow(CustomInputFlow):
         self._set_screen(action, context)
         text = self._get_chosen_project_info_text(context, action, is_markdown=True)
         self._bot_manager.check_bot_limits()
-        project_name = context.chat_data.projects_map[context.chat_data.start_project_id]
+        project_name = context.chat_data.projects_map[context.chat_data.start_project_id].name
 
         bot_id = random_id()
-        cfg = BotConfig(
+        cfg = SearchConfig(
             bot_id=bot_id,
             project_id=context.chat_data.start_project_id,
             project_name=project_name,
@@ -368,23 +244,21 @@ class StartFlow(CustomInputFlow):
         inst = BotInstance(cfg=cfg)
         text += f"✅ Запускаю бота #{bot_id}"
         await self._messenger.render_menu_message(context, text, logger, parse_mode=ParseMode.MARKDOWN_V2)
-        await self._bot_manager.start_bot(inst, context)
-        logger.info("Started bot #%s", bot_id)
+        await self._bot_manager.start_bot(inst, context, logger)
 
     @override
     def _get_chosen_project_info_text(
         self, context: CustomContext, action: FlowAction | None = None, is_markdown: bool = False
     ) -> str:
-        project_name = ensure_str(
-            context.chat_data.projects_map.get(context.chat_data.start_project_id),
-            getter=escape_str if is_markdown else None,
-        )
+        project = context.chat_data.projects_map.get(context.chat_data.start_project_id)
+        project_name = ensure_str(project, getter=lambda proj: escape_str(proj.name) if is_markdown else proj.name)
+        currently_booked = ensure_str(project, getter=lambda proj: proj.review_info.booked)
         lines = [
             f"проект: {project_name} (ID {ensure_str(context.chat_data.start_project_id)})",
             f"режим: {ensure_str(context.chat_data.start_mode, getter=lambda mode: mode.to_text())}",
-            f"количество проверок: {ensure_str(context.chat_data.start_required_reviews)}",
-            f"начало поиска: {ensure_str(context.chat_data.start_from, getter=dt_to_pretty)}",
-            f"конец поиска: {ensure_str(context.chat_data.start_to, getter=dt_to_pretty)}",
+            f"количество проверок: {currently_booked}/{ensure_str(context.chat_data.start_required_reviews)}",
+            f"начало поиска: {ensure_str(context.chat_data.start_from, getter=dt_to_pretty, tz=context.bot.defaults.tzinfo)}",
+            f"конец поиска: {ensure_str(context.chat_data.start_to, getter=dt_to_pretty, tz=context.bot.defaults.tzinfo)}",
         ]
         line_idx = self._get_action_idx(action) if action else len(lines)
         project_info_text = "\n".join(lines[:line_idx]) + "\n\n"

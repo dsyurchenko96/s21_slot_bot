@@ -1,31 +1,73 @@
-from datetime import date, datetime, timedelta, tzinfo
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from datetime import time as dt_time
-from typing import Callable
+from typing import Annotated, Callable
+from zoneinfo import ZoneInfo
 
 import pydantic
-from pydantic import AwareDatetime, TypeAdapter
+from pydantic import AfterValidator, AwareDatetime, TypeAdapter
+from pydantic_core.core_schema import ValidationInfo
 
-from s21_slot_bot.common.exceptions import InvalidUserInputError
+from s21_slot_bot.app.errors import InvalidUserInputError
 from s21_slot_bot.common.logger import LoggerLike
 
-type Parser = Callable[[str], datetime]
+type DatetimeParser = Callable[[str], datetime]
 
 DateAdapter = TypeAdapter(date)
 TimeAdapter = TypeAdapter(dt_time)
 DatetimeAdapter = TypeAdapter(datetime)
 TimedeltaAdapter = TypeAdapter(timedelta)
 
+#
+# def _convert_to_config_timezone(
+#     value: datetime,
+#     info: ValidationInfo,
+# ) -> datetime:
+#     timezone = None
+#     if info.context:
+#         timezone = info.context.get("timezone")
+#     if timezone is None:
+#         return value
+#     if not isinstance(timezone, ZoneInfo):
+#         raise TypeError("validation context timezone must be ZoneInfo")
+#     return value.astimezone(timezone)
+#
+#
+# ConfiguredAwareDatetime = Annotated[
+#     AwareDatetime,
+#     AfterValidator(_convert_to_config_timezone),
+# ]
 
+
+# NOTE: requests should be sent only with UTC
 def dt_to_isoz(dt: datetime) -> str:
-    return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
-def dt_to_pretty(dt: datetime) -> str:
+def dt_to_pretty(dt: datetime, tz: tzinfo | None = None) -> str:
+    if tz:
+        dt = dt.astimezone(tz=tz)
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def dt_to_pretty_time(dt: datetime, tz: tzinfo | None = None) -> str:
+    if tz:
+        dt = dt.astimezone(tz=tz)
+    return dt.strftime("%H:%M")
+
+
+def safe_isoz_to_dt(isoz: str | None, tz: tzinfo, logger: LoggerLike) -> datetime | None:
+    if not isoz:
+        return None
+    try:
+        parsed_dt = _parse_as_datetime(isoz, tz)
+        return parsed_dt
+    except pydantic.ValidationError as e:
+        logger.warning("Unable to parse text `%s` as datetime, error: %s", isoz, e)
+        return None
+
+
 def parse_to_datetime(text: str, tz: tzinfo, from_dt: AwareDatetime, logger: LoggerLike) -> datetime:
-    parsers: list[tuple[str, Parser]] = [
+    parsers: list[tuple[str, DatetimeParser]] = [
         ("time", lambda value: _parse_as_time(value, tz)),
         ("date", lambda value: _parse_as_date(value, tz)),
         ("datetime", lambda value: _parse_as_datetime(value, tz)),
@@ -61,7 +103,7 @@ def _parse_as_timedelta(text: str, from_dt: AwareDatetime) -> datetime:
 
 def _parse_with_chain(
     text: str,
-    parsers: list[tuple[str, Parser]],
+    parsers: list[tuple[str, DatetimeParser]],
     logger: LoggerLike,
 ) -> datetime:
     errors: list[Exception] = []

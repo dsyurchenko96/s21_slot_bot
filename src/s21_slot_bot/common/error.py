@@ -10,17 +10,18 @@ class Error(Exception):
         self,
         message: str,
         status: HTTPStatus | None = None,
-        location: str | dict[str, Any] | None = None,
+        location: dict[str, Any] | None = None,
         help_text: str | None = None,
     ):
         super().__init__(message)
         self.message = message
         self.status = status
-        self.location = json.dumps(location, ensure_ascii=False, indent=2) if isinstance(location, dict) else location
+        self.location = location
+        self.location_dump = json.dumps(location, ensure_ascii=False, indent=2)
         self.help_text = help_text or self.default_help_text
 
     def __str__(self) -> str:
-        return f"message=`{self.message}`, status=`{self.effective_status}`, help=`{self.help_text}`\nlocation={self.location}"
+        return f"message=`{self.message}`, status=`{self.effective_status}`, help=`{self.help_text}`\nlocation={self.location_dump}"
 
     @property
     def effective_status(self) -> HTTPStatus | None:
@@ -41,34 +42,3 @@ class Error(Exception):
         if status := self.effective_status:
             text += f"\nстатус: {status} ({status.phrase})"
         return text
-
-
-class School21Error(Error): ...
-
-
-class MenuError(Error): ...
-
-
-class InvalidUserInputError(MenuError):
-    default_help_text = "попробуй еще раз"
-
-
-class InvalidCallbackDataError(MenuError): ...
-
-
-class TooManyBotsError(MenuError):
-    default_help_text = "останови/удали имеющихся или поменяй количество ботов"
-
-
-class BotNotFoundError(MenuError): ...
-
-
-class ForbiddenError(Error):
-    default_help_text = "проверь, что ID чата совпадает с выставленным в приложении"
-
-
-class InternalError(Error):
-    default_help_text = "заведи баг"
-
-
-class BotRuntimeError(InternalError): ...

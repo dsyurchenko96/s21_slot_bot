@@ -1,44 +1,26 @@
-import enum
 from datetime import datetime
 from typing import Any, Callable, Coroutine, cast, override
 
 import pydantic
-from pydantic import TypeAdapter
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 
-from s21_slot_bot.app.consts import MAX_INTERVAL_SEC, MAX_REQUIRED_REVIEWS, MIN_INTERVAL_SEC, MIN_REQUIRED_REVIEWS
-from s21_slot_bot.app.flows.base import CustomInputFlow, Flow, FlowAction, InputFlowAction
+from s21_slot_bot.app.consts import MAX_INTERVAL_SEC, MIN_INTERVAL_SEC
+from s21_slot_bot.app.errors import InternalError, InvalidCallbackDataError, InvalidUserInputError
+from s21_slot_bot.app.flows.actions import EditFlowAction, FlowAction, InputFlowAction
+from s21_slot_bot.app.flows.base import CustomInputFlow
 from s21_slot_bot.app.models import (
     CustomContext,
-    FlowCategory,
-    IntervalSec,
     IntervalSecAdapter,
     Lifecycle,
     Mode,
-    RequiredReviews,
     RequiredReviewsAdapter,
     Screen,
 )
-from s21_slot_bot.common.exceptions import Error, InternalError, InvalidCallbackDataError, InvalidUserInputError
+from s21_slot_bot.client.consts import MIN_REQUIRED_REVIEWS
 from s21_slot_bot.common.logger import LoggerLike, get_user_input_logger
 from s21_slot_bot.common.strings import escape_str
 from s21_slot_bot.common.time import dt_to_pretty, parse_to_datetime
-
-
-class EditFlowAction(FlowAction):
-    LIST_BOTS = enum.auto()
-    SHOW_MENU = enum.auto()
-    PICK_BOT = enum.auto()
-    MENU_FROM = enum.auto()
-    MENU_TO = enum.auto()
-    PICK_INTERVAL = enum.auto()
-    SET_INTERVAL = enum.auto()
-    MENU_MODE = enum.auto()
-    SET_MODE = enum.auto()
-    MENU_NUM_REVIEWS = enum.auto()
-    SET_NUM_REVIEWS = enum.auto()
-    RESTART = enum.auto()
 
 
 class EditFlow(CustomInputFlow):
@@ -76,9 +58,11 @@ class EditFlow(CustomInputFlow):
         inst = self._bot_manager.get_bot(bot_id)
         c = inst.cfg
         project_name = escape_str(c.project_name) if is_markdown else c.project_name
+        from_pretty = dt_to_pretty(c.from_dt, tz=context.bot.defaults.tzinfo)
+        to_pretty = dt_to_pretty(c.to_dt, tz=context.bot.defaults.tzinfo)
         text = (
             f"✏️ бот #{c.bot_id} ({project_name})\n"
-            f"окно: {dt_to_pretty(c.from_dt)} → {dt_to_pretty(c.to_dt)}\n"
+            f"окно: {from_pretty} → {to_pretty}\n"
             f"интервал: {c.interval_sec} секунд\n"
             f"режим: {c.mode.to_text()}\n"
             f"количество проверок: {c.required_reviews}\n"
@@ -151,9 +135,9 @@ class EditFlow(CustomInputFlow):
                 inst = self._bot_manager.get_bot(bot_id)
                 update_text = ""
                 if inst.cfg.interval_sec != interval:
-                    self._bot_manager.stop_bot(bot_id, context)
+                    self._bot_manager.stop_bot(bot_id, context, logger)
                     inst.cfg.interval_sec = interval
-                    await self._bot_manager.start_bot(inst, context)
+                    await self._bot_manager.start_bot(inst, context, logger)
                     update_text = "✅ интервал обновлен, бот перезапущен"
                 await self.edit_menu(query, context, update_text=update_text)
                 # context.chat_data.screen = Screen.EDIT_WAIT_INTERVAL
@@ -234,7 +218,7 @@ class EditFlow(CustomInputFlow):
         from_dt = parse_to_datetime(text, context.bot.defaults.tzinfo, now, logger)
         if from_dt >= inst.cfg.to_dt:
             raise InvalidUserInputError(
-                f"начальное время должно быть раньше конечного ({dt_to_pretty(inst.cfg.to_dt)})"
+                f"начальное время должно быть раньше конечного ({dt_to_pretty(inst.cfg.to_dt, tz=context.bot.defaults.tzinfo)})"
             )
         inst.cfg.from_dt = from_dt
 
@@ -257,7 +241,7 @@ class EditFlow(CustomInputFlow):
         to_dt = parse_to_datetime(text, context.bot.defaults.tzinfo, from_dt, logger)
         if to_dt <= inst.cfg.from_dt:
             raise InvalidUserInputError(
-                f"конечное время должно быть позже начального ({dt_to_pretty(inst.cfg.from_dt)})"
+                f"конечное время должно быть позже начального ({dt_to_pretty(inst.cfg.from_dt, tz=context.bot.defaults.tzinfo)})"
             )
         inst.cfg.to_dt = to_dt
 
@@ -318,8 +302,8 @@ class EditFlow(CustomInputFlow):
         #     await self.edit_interval(update, context)
         #     raise
         inst.cfg.interval_sec = interval_sec
-        self._bot_manager.stop_bot(bot_id, context)
-        await self._bot_manager.start_bot(inst, context)
+        self._bot_manager.stop_bot(bot_id, context, logger)
+        await self._bot_manager.start_bot(inst, context, logger)
         await self.edit_menu(update, context, update_text="✅ интервал обновлен, бот перезапущен")
 
     # async def pick_mode(self, query: CallbackQuery, context: CustomContext) -> None:
@@ -369,5 +353,5 @@ class EditFlow(CustomInputFlow):
             raise InvalidUserInputError(f"бот #{bot_id} уже активен", help_text="выбери другого бота")
         self._bot_manager.check_bot_limits()
 
-        await self._bot_manager.start_bot(inst, context)
+        await self._bot_manager.start_bot(inst, context, logger)
         await self.edit_menu(query, context, update_text=f"🔄 бот #{bot_id} перезапущен")

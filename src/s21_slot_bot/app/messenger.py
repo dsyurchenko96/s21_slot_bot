@@ -27,7 +27,7 @@ class Messenger:
         self,
         context: CustomContext,
         text: str,
-        kb: InlineKeyboardMarkup = InlineKeyboardMarkup([]),
+        kb: InlineKeyboardMarkup | None = None,
         parse_mode: ParseMode | None = None,
     ) -> Message:
         if parse_mode == ParseMode.MARKDOWN_V2:
@@ -36,7 +36,7 @@ class Messenger:
             self._chat_id,
             text,
             parse_mode=parse_mode,
-            # reply_markup=MAIN_MENU_KB,
+            reply_markup=kb,
         )
         context.bot_data.chat_should_move_menu[self._chat_id] = True
         return message
@@ -55,7 +55,7 @@ class Messenger:
         context: CustomContext,
         text: str,
         logger: LoggerLike,
-        kb: InlineKeyboardMarkup = InlineKeyboardMarkup([]),
+        kb: InlineKeyboardMarkup | None = None,
         parse_mode: ParseMode | None = None,
     ) -> None:
         if context.bot_data.chat_should_move_menu.get(self._chat_id):
@@ -79,7 +79,7 @@ class Messenger:
         context: CustomContext,
         text: str,
         logger: LoggerLike,
-        kb: InlineKeyboardMarkup = InlineKeyboardMarkup([]),
+        kb: InlineKeyboardMarkup | None = None,
         parse_mode: ParseMode | None = None,
     ) -> None:
         context.chat_data.menu_error_msg_id = await self._ensure_message(context.chat_data.menu_error_msg_id)

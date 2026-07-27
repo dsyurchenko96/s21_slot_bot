@@ -3,7 +3,7 @@ import json
 import re
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, tzinfo
 from http import HTTPStatus
 from typing import Any, NoReturn
 from urllib.parse import parse_qs, urljoin, urlparse
@@ -23,16 +23,34 @@ from s21_slot_bot.client.consts import (
     X_EDU_ORG_UNIT_ID,
     X_EDU_PRODUCT_ID,
 )
-from s21_slot_bot.client.models import ContentType, Project, ProjectStatus, SlotsInfo, Tokens
+from s21_slot_bot.client.errors import (
+    School21Error,
+    School21ErrorType,
+    School21LoginError,
+    School21NoPointsError,
+    School21ParsingError,
+    School21SlotNotFoundError,
+)
+from s21_slot_bot.client.models import (
+    Booking,
+    ContentType,
+    Project,
+    ProjectExtended,
+    ProjectStatus,
+    ReviewInfo,
+    SlotsInfo,
+    Tokens,
+)
 from s21_slot_bot.client.queries import (
     Q_BOOK,
+    Q_GET_BOOKINGS,
     Q_GET_CUR_PROJECTS,
     Q_GET_LOCAL_COURSE_GOALS,
     Q_GET_MODULE,
+    Q_GET_PROJECT_INFO,
     Q_GET_SLOTS,
     Q_GET_USER,
 )
-from s21_slot_bot.common.exceptions import School21Error
 from s21_slot_bot.common.logger import LoggerLike
 from s21_slot_bot.common.time import dt_to_isoz
 
@@ -46,6 +64,7 @@ class School21Client:
         self._sess = requests.Session()
         self._tokens: Tokens | None = None
         self._user_id: str | None = None
+        self._student_id: str | None = None
 
     @property
     def _token_endpoint(self) -> str:
@@ -72,7 +91,7 @@ class School21Client:
         try:
             auth_resp.raise_for_status()
         except HTTPError as e:
-            raise School21Error(f"ошибка авторизации: `{e}`", status=HTTPStatus(auth_resp.status_code)) from e
+            raise School21LoginError(f"ошибка авторизации: `{e}`", status=HTTPStatus(auth_resp.status_code)) from e
 
         action_url = self._extract_login_action(auth_resp.text, AUTH_URL)
         action_resp = self._sess.post(
@@ -84,7 +103,7 @@ class School21Client:
 
         code = self._extract_code_from_redirect_history(action_resp.history + [action_resp])
         if not code:
-            raise School21Error("не удалось извлечь код авторизации", status=HTTPStatus(auth_resp.status_code))
+            raise School21LoginError("не удалось извлечь код авторизации", status=HTTPStatus(auth_resp.status_code))
 
         token_resp = self._sess.post(
             self._token_endpoint,
@@ -100,23 +119,26 @@ class School21Client:
         try:
             token_resp.raise_for_status()
         except HTTPError as e:
-            raise School21Error(f"ошибка при запросе токена: `{e}`", status=HTTPStatus(token_resp.status_code)) from e
+            raise School21LoginError(
+                f"ошибка при запросе токена: `{e}`", status=HTTPStatus(token_resp.status_code)
+            ) from e
 
         payload = token_resp.json()
 
         self._set_tokens_from_payload(payload)
 
-    def get_user_id(self, logger: LoggerLike) -> str:
-        if self._user_id:
-            return self._user_id
+    def get_user_and_student_id(self, logger: LoggerLike) -> tuple[str, str]:
+        if self._user_id and self._student_id:
+            return self._user_id, self._student_id
 
         operation_name = "getCurrentUser"
         data = self._graphql(operation_name, Q_GET_USER, {}, logger)
         try:
-            user_id = data["user"][operation_name]["id"]
-            self._user_id = user_id
+            user_info = data["user"][operation_name]
+            user_id, student_id = user_info["id"], user_info["currentSchoolStudentId"]
+            self._user_id, self._student_id = user_id, student_id
             logger.info("User ID is `%s`", user_id)
-            return user_id
+            return user_id, student_id
         except Exception as e:
             self._raise_parsing_error(operation_name, e, data)
 
@@ -125,10 +147,10 @@ class School21Client:
         data = self._graphql(operation_name, Q_GET_CUR_PROJECTS, {"userId": user_id}, logger)
         try:
             projects: list[dict[str, Any]] = data["student"][operation_name]
-            reviewed_projects = []
+            reviewed_projects: list[Project] = []
             logger.info("Processing %d projects in review", len(projects))
-            for project_dict in projects:
-                project = Project(**project_dict)
+            for raw_project in projects:
+                project = Project.model_validate(raw_project)
                 if project.status == ProjectStatus.IN_PROGRESS and project.course_id:
                     course_projects = self.get_local_course_goals(project.course_id, logger)
                     course_reviewed_projects = list(
@@ -145,12 +167,12 @@ class School21Client:
         except Exception as e:
             self._raise_parsing_error(operation_name, e, data)
 
-    def get_local_course_goals(self, course_id: int, logger: LoggerLike) -> list[Project]:
+    def get_local_course_goals(self, course_id: str, logger: LoggerLike) -> list[Project]:
         operation_name = "getLocalCourseGoals"
-        data = self._graphql(operation_name, Q_GET_LOCAL_COURSE_GOALS, {"localCourseId": str(course_id)}, logger)
+        data = self._graphql(operation_name, Q_GET_LOCAL_COURSE_GOALS, {"localCourseId": course_id}, logger)
         try:
             course_goals: list[dict] = data["course"][operation_name]["localCourseGoals"]
-            course_projects = [Project(**goal) for goal in course_goals]
+            course_projects = [Project.model_validate(goal) for goal in course_goals]
             logger.info(
                 "Local course projects for course_id `%s`: %s",
                 course_id,
@@ -160,7 +182,18 @@ class School21Client:
         except Exception as e:
             self._raise_parsing_error(operation_name, e, data)
 
-    def get_task_and_answer(self, module_id: int, logger: LoggerLike) -> tuple[str, str]:
+    def get_review_info(self, goal_id: str, student_id: str, logger: LoggerLike) -> ReviewInfo:
+        operation_name = "getProjectInfo"
+        data = self._graphql(operation_name, Q_GET_PROJECT_INFO, {"goalId": goal_id, "studentId": student_id}, logger)
+        try:
+            raw_info = data["school21"]["getP2PChecksInfo"]["projectReviewsInfo"]
+            review_info = ReviewInfo.model_validate(raw_info)
+            logger.info("Project ID `%s`: %d / %d reviews", goal_id, review_info.booked, review_info.required)
+            return review_info
+        except Exception as e:
+            self._raise_parsing_error(operation_name, e, data)
+
+    def get_task_and_answer(self, module_id: str, logger: LoggerLike) -> tuple[str, str]:
         operation_name = "calendarGetModule"
         data = self._graphql(operation_name, Q_GET_MODULE, {"moduleId": module_id}, logger)
         try:
@@ -185,15 +218,27 @@ class School21Client:
         except Exception as e:
             self._raise_parsing_error(operation_name, e, data)
 
+    def get_bookings(self, from_dt: datetime, to_dt: datetime, logger: LoggerLike) -> dict[str, Booking]:
+        from_iso_z, to_iso_z = dt_to_isoz(from_dt), dt_to_isoz(to_dt)
+        operation_name = "calendarGetMyBookings"
+        data = self._graphql(operation_name, Q_GET_BOOKINGS, {"from": from_iso_z, "to": to_iso_z}, logger)
+        try:
+            raw_bookings: list[dict[str, Any]] = data["student"]["getMyCalendarBookings"]
+            bookings = {raw["id"]: Booking.model_validate(raw) for raw in raw_bookings}
+            logger.info("Received %d bookings: %s", len(bookings), bookings)
+            return bookings
+        except Exception as e:
+            self._raise_parsing_error(operation_name, e, data)
+
     def book(
         self,
         answer_id: str,
-        start_time_dt: datetime,
-        staff_slot: bool,
+        start_time: datetime,
         logger: LoggerLike,
+        is_staff_slot: bool = False,
         is_online: bool = True,
     ) -> str:
-        start_time_iso_z = dt_to_isoz(start_time_dt)
+        start_time_iso_z = dt_to_isoz(start_time)
         operation_name = "calendarAddBookingToEventSlot"
         data = self._graphql(
             operation_name,
@@ -201,7 +246,7 @@ class School21Client:
             {
                 "answerId": answer_id,
                 "startTime": start_time_iso_z,
-                "wasStaffSlotChosen": staff_slot,
+                "wasStaffSlotChosen": is_staff_slot,
                 "isOnline": is_online,
             },
             logger,
@@ -218,8 +263,6 @@ class School21Client:
     ) -> dict[str, Any]:
         logger.info("Calling `%s` with variables `%s`", operation_name, variables)
         self._refresh_if_needed(logger)
-        if not self._tokens:
-            raise School21Error("не удалось обновить токен")
 
         headers = {
             "Content-Type": ContentType.APPLICATION_JSON,
@@ -272,11 +315,8 @@ class School21Client:
             json.dumps(data, indent=2, ensure_ascii=False),
         )
 
-        if data.get("errors"):
-            raise School21Error(
-                "ошибка запроса к Школе 21",
-                location={"operation": operation_name, "input": variables, "errors": data["errors"]},
-            )
+        if errors := data.get("errors"):
+            self._raise_error_from_response(operation_name, variables, errors)
 
         return data.get("data", {})
 
@@ -324,7 +364,7 @@ class School21Client:
             flags=re.IGNORECASE,
         )
         if not match:
-            raise School21Error("не удалось извлечь информацию для авторизации")
+            raise School21LoginError("не удалось извлечь информацию для авторизации")
         return urljoin(base_url, html.unescape(match.group(1)))
 
     def _extract_code_from_redirect_history(self, history: list[requests.Response]) -> str | None:
@@ -341,7 +381,24 @@ class School21Client:
                 return code
         return None
 
-    def _raise_parsing_error(self, operation_name: str, error: Exception, data: dict[str, Any]) -> NoReturn:
+    def _raise_error_from_response(
+        self, operation_name: str, variables: dict[str, Any], errors: list[dict[str, Any]]
+    ) -> NoReturn:
+        location = {"operation": operation_name, "input": variables, "errors": errors}
+        for error in errors:
+            error_type = error and error.get("extensions", {}).get("uiErrorCode")
+            match error_type:
+                case School21ErrorType.NO_P2P_POINTS:
+                    raise School21NoPointsError("недостаточно P2P-пойнтов для записи на проверку", location=location)
+                case School21ErrorType.SLOT_NOT_FOUND:
+                    raise School21SlotNotFoundError("слот не найден", location=location)
+
         raise School21Error(
+            "ошибка запроса к Школе 21",
+            location=location,
+        )
+
+    def _raise_parsing_error(self, operation_name: str, error: Exception, data: dict[str, Any]) -> NoReturn:
+        raise School21ParsingError(
             f"не удалось обработать ответ от операции {operation_name}, ошибка: `{error}`", location=data
         ) from error

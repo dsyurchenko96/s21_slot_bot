@@ -1,19 +1,12 @@
-import enum
 from typing import override
 
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
 
-from s21_slot_bot.app.consts import MAX_NUM_BOTS
-from s21_slot_bot.app.flows.base import Flow, FlowAction
-from s21_slot_bot.app.models import CustomContext, FlowCategory, Lifecycle
-from s21_slot_bot.common.exceptions import InvalidCallbackDataError
+from s21_slot_bot.app.errors import InvalidCallbackDataError
+from s21_slot_bot.app.flows.actions import StopFlowAction
+from s21_slot_bot.app.flows.base import Flow
+from s21_slot_bot.app.models import CustomContext, Lifecycle
 from s21_slot_bot.common.logger import get_user_input_logger
-
-
-class StopFlowAction(FlowAction):
-    STOP_MENU = enum.auto()
-    STOP_ONE = enum.auto()
-    STOP_ALL = enum.auto()
 
 
 class StopFlow(Flow):
@@ -24,11 +17,11 @@ class StopFlow(Flow):
         match action:
             case StopFlowAction.STOP_ONE:
                 bot_id = callback_data.pop()
-                ok = self._bot_manager.stop_bot(bot_id, context)
+                ok = self._bot_manager.stop_bot(bot_id, context, logger)
                 text = f"⛔ бот #{bot_id} остановлен" if ok else f"⚠️ бот #{bot_id} не найден"
                 await self._messenger.render_menu_message(context, text, logger)
             case StopFlowAction.STOP_ALL:
-                self._bot_manager.stop_all(context)
+                self._bot_manager.stop_all(context, logger)
                 await self._messenger.render_menu_message(context, "⛔ все боты остановлены", logger)
             case _:
                 raise InvalidCallbackDataError(f"неподдерживаемое действие '{action}' при остановке бота")

@@ -1,10 +1,10 @@
 from typing import Any, Callable
 
 
-def ensure_str(field: Any, getter: Callable[[Any], str] | None = None, default: str = "-") -> str:
+def ensure_str(field: Any, getter: Callable[..., str] | None = None, default: str = "-", **kwargs) -> str:
     getter = getter if getter is not None else lambda _: field
     try:
-        value = getter(field)
+        value = getter(field, **kwargs)
         if value is None:
             return default
         return str(value)

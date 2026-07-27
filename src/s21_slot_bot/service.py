@@ -11,7 +11,9 @@ from telegram.ext import (
     filters,
 )
 
+from s21_slot_bot.app.booking_manager import BookingManager
 from s21_slot_bot.app.bot_manager import BotManager
+from s21_slot_bot.app.flows.collector import FlowCollector
 from s21_slot_bot.app.input_handler import InputHandler
 from s21_slot_bot.app.messenger import Messenger
 from s21_slot_bot.app.models import App, BotData, ChatData, CustomContext
@@ -27,25 +29,42 @@ class SlotBotService:
         tg_app_builder: type[ApplicationBuilder] = ApplicationBuilder,
         messenger_factory: type[Messenger] = Messenger,
         bot_manager_factory: type[BotManager] = BotManager,
+        booking_manager_factory: type[BookingManager] = BookingManager,
+        flow_collector_factory: type[FlowCollector] = FlowCollector,
         input_handler_factory: type[InputHandler] = InputHandler,
     ):
         self._s21_client = s21_client_factory(config=config.s21)
+        self._chat_id = config.bot.tg_chat_id.get_secret_value()
         self._tg_app = self._build_tg_app(
             tg_app_builder=tg_app_builder, token=config.tg_token.get_secret_value(), timezone=config.timezone
         )
-        self._messenger = messenger_factory(chat_id=config.bot.tg_chat_id.get_secret_value(), bot=self._tg_app.bot)
+        self._messenger = messenger_factory(chat_id=self._chat_id, bot=self._tg_app.bot)
+        self._booking_manager = booking_manager_factory(
+            s21_client=self._s21_client,
+            messenger=self._messenger,
+            app=self._tg_app,
+            refresh_interval=config.bot.refresh_bookings_interval_sec,
+            chat_id=self._chat_id,
+        )
         self._bot_manager = bot_manager_factory(
             bot_config=config.bot,
+            chat_id=self._chat_id,
             messenger=self._messenger,
-            chat_id=config.bot.tg_chat_id.get_secret_value(),
+            booking_manager=self._booking_manager,
             s21_config=config.s21,
             s21_client_factory=s21_client_factory,
         )
-        self._input_handler = input_handler_factory(
+        self._flows = flow_collector_factory(
             s21_client=self._s21_client,
             bot_manager=self._bot_manager,
+            booking_manager=self._booking_manager,
             messenger=self._messenger,
-            chat_id=config.bot.tg_chat_id.get_secret_value(),
+        )
+        self._input_handler = input_handler_factory(
+            bot_manager=self._bot_manager,
+            messenger=self._messenger,
+            flows=self._flows,
+            chat_id=self._chat_id,
         )
 
         self._wire_app_handlers()

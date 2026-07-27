@@ -24,6 +24,7 @@ class LogLevel(IntEnum):
 
 class LogEntity(StrEnum):
     BOT = enum.auto()
+    BOOKING_REFRESHER = enum.auto()
     USER_INPUT = enum.auto()
     SERVICE_HOOK = enum.auto()
     UNKNOWN = enum.auto()
@@ -55,17 +56,13 @@ def get_user_input_logger(user_input: Update | CallbackQuery | object) -> Logger
     elif isinstance(user_input, Update):
         input_id = user_input.update_id
     else:  # update may be `object` in error handling
-        return get_id_logger(LogEntity.UNKNOWN, random_id())
-    return get_id_logger(LogEntity.USER_INPUT, input_id)
+        return get_id_logger(LogEntity.UNKNOWN)
+    return get_id_logger(LogEntity.USER_INPUT, entity_id=input_id)
 
 
-def get_service_hook_logger() -> LoggerAdapterID:
-    return get_id_logger(LogEntity.SERVICE_HOOK, random_id())
-
-
-def get_id_logger(entity_name: LogEntity, entity_id: str | int) -> LoggerAdapterID:
+def get_id_logger(entity_name: LogEntity, entity_id: str | int | None = None) -> LoggerAdapterID:
     logger = logging.getLogger()
-    adapter = LoggerAdapterID(logger, {"entity": entity_name, "id": entity_id})
+    adapter = LoggerAdapterID(logger, {"entity": entity_name, "id": entity_id or random_id()})
     return adapter
 
 
