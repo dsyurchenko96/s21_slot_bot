@@ -29,7 +29,6 @@ from s21_slot_bot.common.logger import LoggerLike
 from s21_slot_bot.common.random import hash_id
 
 
-# TODO: add reminders (-5 min / -1 min / 0 min) about upcoming bookings
 class BotManager:
     def __init__(
         self,
@@ -157,17 +156,7 @@ class BotManager:
             # TODO: race condition with 2 bots trying to book the same project twice?
             slots_info = s21_client.get_slots_info(task_id, cfg.from_dt, cfg.to_dt, logger)
             currently_booked = slots_info.review_info.booked
-            previously_booked = inst.stats.currently_booked
             inst.stats.currently_booked = currently_booked
-            # TODO: move currently_booked into a separate Project entity,
-            #  to avoid multiple bots for 1 project sending the same message
-            if currently_booked < previously_booked:
-                # TODO: output which review was cancelled
-                await self._messenger.send(
-                    context,
-                    f"⚠️ бот #{cfg.bot_id} ({cfg.project_name}): отменена проверка\n"
-                    f"текущих проверок: {currently_booked}/{cfg.required_reviews}",
-                )
             missing = cfg.required_reviews - currently_booked
             if missing < 1:
                 logger.info(
@@ -181,8 +170,6 @@ class BotManager:
                 return
 
             start_time, is_staff_slot = picked
-            # TODO: give the option to (try to) book the found slot
-            # TODO: delete the message after booking
             match cfg.mode:
                 case Mode.ONLY_FIND:
                     await self._booking_manager.book_dry(
