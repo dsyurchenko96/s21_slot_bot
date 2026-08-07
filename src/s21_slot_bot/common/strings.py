@@ -12,5 +12,5 @@ def ensure_str(field: Any, getter: Callable[..., str] | None = None, default: st
         return default
 
 
-def escape_str(text: str) -> str:
+def backtick_wrap(text: str) -> str:
     return f"`{text}`"

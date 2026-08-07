@@ -151,7 +151,7 @@ class School21Client:
             logger.info("Processing %d projects in review", len(projects))
             for raw_project in projects:
                 project = Project.model_validate(raw_project)
-                if project.status == ProjectStatus.IN_PROGRESS and project.course_id:
+                if project.course_status == ProjectStatus.IN_PROGRESS and project.course_id:
                     course_projects = self.get_local_course_goals(project.course_id, logger)
                     course_reviewed_projects = list(
                         filter(lambda p: p.status == ProjectStatus.P2P_EVALUATIONS, course_projects)

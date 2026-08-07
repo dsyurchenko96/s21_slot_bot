@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import pydantic
 from pydantic import AfterValidator, AwareDatetime, TypeAdapter
 from pydantic_core.core_schema import ValidationInfo
+from telegram.helpers import escape_markdown
 
 from s21_slot_bot.app.errors import InvalidUserInputError
 from s21_slot_bot.common.logger import LoggerLike
@@ -53,6 +54,13 @@ def dt_to_pretty_time(dt: datetime, tz: tzinfo | None = None) -> str:
     if tz:
         dt = dt.astimezone(tz=tz)
     return dt.strftime("%H:%M")
+
+
+def dt_to_markdown(dt: datetime, tz: tzinfo | None = None) -> str:
+    escaped_pretty = escape_markdown(dt_to_pretty(dt, tz=tz), version=2)
+    unix_time = int(dt.timestamp())
+    md = f"![{escaped_pretty}](tg://time?unix={unix_time})"
+    return md
 
 
 def safe_isoz_to_dt(isoz: str | None, tz: tzinfo, logger: LoggerLike) -> datetime | None:

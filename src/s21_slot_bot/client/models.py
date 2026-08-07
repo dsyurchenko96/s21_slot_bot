@@ -53,9 +53,10 @@ class Project(S21Model):
     id: CoercedStr | None = Field(default=None, description="Project ID", alias="goalId")
     name: str = Field(description="Project name", alias="goalName")
     course_id: CoercedStr | None = Field(default=None, description="Course ID", alias="localCourseId")
-    status: ProjectStatus | None = Field(
-        default=None, description="Current project status", alias="displayedCourseStatus"
+    course_status: ProjectStatus | None = Field(
+        default=None, description="Current course status", alias="displayedCourseStatus"
     )
+    status: ProjectStatus | None = Field(default=None, description="Current project status", alias="goalStatus")
 
 
 class ProjectExtended(Project):

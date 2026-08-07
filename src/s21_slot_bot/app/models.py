@@ -60,9 +60,9 @@ class Mode(StrEnum):
     def to_text(self) -> str:
         match self:
             case Mode.ONLY_FIND:
-                return "найти слот без записи"
+                return "🔍 найти слот без записи"
             case Mode.FIND_AND_BOOK:
-                return "найти слоты и записаться"
+                return "📝 найти слоты и записаться"
 
 
 class Screen(StrEnum):
@@ -118,14 +118,13 @@ class ChatData(BaseModel):
     screen: Screen = Screen.MENU
     menu_msg_id: int | None = None
     menu_error_msg_id: int | None = None
-
     projects_map: dict[str, ProjectExtended] = Field(default_factory=dict)
+    last_booking_refresh_time: AwareDatetime | None = None
     start_project_id: str | None = None
     start_required_reviews: RequiredReviews | None = None
     start_from: AwareDatetime | None = None
     start_to: AwareDatetime | None = None
     start_mode: Mode | None = None
-
     edit_bot_id: str | None = None
 
 

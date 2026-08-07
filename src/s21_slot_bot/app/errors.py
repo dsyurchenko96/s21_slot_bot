@@ -1,3 +1,5 @@
+import telegram
+
 from s21_slot_bot.common.error import Error
 
 
@@ -27,3 +29,7 @@ class InternalError(Error):
 
 
 class BotRuntimeError(InternalError): ...
+
+
+def is_not_modified_tg_error(error: telegram.error.BadRequest) -> bool:
+    return "not modified" in error.message.lower()

@@ -56,7 +56,7 @@ class BotManager:
         return self._bot_config.poll_interval_sec
 
     def check_bot_limits(self) -> None:
-        if len(self.list_all()) >= self._bot_config.max_bots:
+        if len(self.list_all()) > self._bot_config.max_bots:
             raise TooManyBotsError(f"Максимальное количество ботов превышено ({self._bot_config.max_bots})")
 
     def get_bot(self, bot_id: str | None) -> BotInstance:
@@ -89,6 +89,9 @@ class BotManager:
         for job in jobs:
             job.schedule_removal()
             logger.info("Stopped job ID `%s`", job.name)
+        has_running_bots = bool(self.list_all(state=Lifecycle.RUNNING))
+        if not has_running_bots and not self._bot_config.should_refresh_bookings_always:
+            self._booking_manager.stop_refreshing(logger)
         return True
 
     def stop_all(self, context: CustomContext, logger: LoggerLike) -> None:
@@ -99,7 +102,8 @@ class BotManager:
         if not self.stop_bot(bot_id, context, logger):
             return False
         inst = self._bots.pop(bot_id, None)
-        return bool(inst)
+        is_deleted = bool(inst)
+        return is_deleted
 
     def delete_all(self, context: CustomContext, logger: LoggerLike, state: Lifecycle | None = None) -> int:
         deleted_counter = 0
@@ -125,8 +129,8 @@ class BotManager:
             self._search, cfg.interval_sec, data=job_data, chat_id=self._chat_id, name=cfg.bot_id
         )
         logger.info("Started bot #%s", cfg.bot_id)
+        self._booking_manager.start_refreshing(logger)
         await job.run(context.application)
-        # inst.task = context.application.create_task(self.run_bot_loop(inst, context))
 
     async def _search(self, context: CustomContext) -> None:
         job = context.job
@@ -181,7 +185,7 @@ class BotManager:
                     )
                     self.stop_bot(cfg.bot_id, context, logger)
                 case Mode.FIND_AND_BOOK:
-                    p2p_points_left = await self._booking_manager.book(
+                    are_p2p_points_left = await self._booking_manager.book(
                         inst=inst,
                         answer_id=answer_id,
                         start_time=start_time,
@@ -189,7 +193,7 @@ class BotManager:
                         context=context,
                         is_staff_slot=is_staff_slot,
                     )
-                    if not p2p_points_left:
+                    if not are_p2p_points_left:
                         self.stop_bot(cfg.bot_id, context, logger)
             inst.stats.failed_retry = 0
         except Exception as e:

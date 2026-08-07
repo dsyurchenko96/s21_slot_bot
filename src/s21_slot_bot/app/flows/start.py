@@ -21,7 +21,7 @@ from s21_slot_bot.client.errors import School21Error
 from s21_slot_bot.client.models import ProjectExtended
 from s21_slot_bot.common.logger import get_user_input_logger
 from s21_slot_bot.common.random import random_id
-from s21_slot_bot.common.strings import ensure_str, escape_str
+from s21_slot_bot.common.strings import backtick_wrap, ensure_str
 from s21_slot_bot.common.time import dt_to_pretty, parse_to_datetime
 
 
@@ -73,7 +73,7 @@ class StartFlow(CustomInputFlow):
             # case StartFlowAction.LIST_PROJECTS:
             #     await self.list_projects(query, context)
             case StartFlowAction.PICK_PROJECT:
-                proj_id = int(callback_data.pop())
+                proj_id = callback_data.pop()
                 context.chat_data.start_project_id = proj_id
                 await self.pick_mode(query, context)
             case InputFlowAction.PICK_MODE:
@@ -251,7 +251,7 @@ class StartFlow(CustomInputFlow):
         self, context: CustomContext, action: FlowAction | None = None, is_markdown: bool = False
     ) -> str:
         project = context.chat_data.projects_map.get(context.chat_data.start_project_id)
-        project_name = ensure_str(project, getter=lambda proj: escape_str(proj.name) if is_markdown else proj.name)
+        project_name = ensure_str(project, getter=lambda proj: backtick_wrap(proj.name) if is_markdown else proj.name)
         currently_booked = ensure_str(project, getter=lambda proj: proj.review_info.booked)
         lines = [
             f"проект: {project_name} (ID {ensure_str(context.chat_data.start_project_id)})",

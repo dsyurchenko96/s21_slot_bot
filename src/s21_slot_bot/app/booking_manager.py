@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
+from telegram.ext import Job
 
 from s21_slot_bot.app.consts import CURRENT_BOOKINGS_SEARCH_WINDOW, UPCOMING_REVIEW_REMINDER_WINDOW
 from s21_slot_bot.app.flows.actions import BookFlowAction
@@ -13,8 +14,8 @@ from s21_slot_bot.client.models import Booking, DryBooking
 from s21_slot_bot.client.s21_client import School21Client
 from s21_slot_bot.common.logger import LogEntity, LoggerLike, get_id_logger
 from s21_slot_bot.common.random import hash_id
-from s21_slot_bot.common.strings import escape_str
-from s21_slot_bot.common.time import dt_to_pretty, dt_to_pretty_time, safe_isoz_to_dt
+from s21_slot_bot.common.strings import backtick_wrap
+from s21_slot_bot.common.time import dt_to_markdown, dt_to_pretty, dt_to_pretty_time, safe_isoz_to_dt
 
 
 class BookingManager:
@@ -32,8 +33,10 @@ class BookingManager:
         self._bookings: dict[str, Booking] = {}
         self._booking_lock = asyncio.Lock()
         self._notifications_sent: dict[str, bool] = {}
-
-        self._job = app.job_queue.run_repeating(self._refresh_bookings, refresh_interval, chat_id=chat_id)
+        self._app = app
+        self._refresh_interval = refresh_interval
+        self._chat_id = chat_id
+        self._job: Job[CustomContext] | None = None
 
     @property
     def bookings(self) -> dict[str, Booking]:
@@ -42,6 +45,27 @@ class BookingManager:
     @property
     def dry_bookings(self) -> dict[str, DryBooking]:
         return self._dry_bookings
+
+    @property
+    def is_refreshing(self) -> bool:
+        return self._job is not None
+
+    def start_refreshing(self, logger: LoggerLike) -> None:
+        if self._job is not None:
+            logger.info("Booking refresher is already running")
+            return
+        logger.info("Starting the booking refresher job")
+        self._job = self._app.job_queue.run_repeating(
+            self._refresh_bookings, self._refresh_interval, chat_id=self._chat_id
+        )
+
+    def stop_refreshing(self, logger: LoggerLike) -> None:
+        if self._job is None:
+            logger.info("Booking refresher is already stopped")
+            return
+        logger.info("Stopping the booking refresher job")
+        self._job.schedule_removal()
+        self._job = None
 
     async def book_dry(
         self,
@@ -76,9 +100,10 @@ class BookingManager:
         )
         await self._messenger.send(
             context,
-            f"🔔 бот #{cfg.bot_id} ({cfg.project_name}) остановлен: найден слот\n"
-            f"начало: {dt_to_pretty(start_time, tz=context.bot.defaults.tzinfo)}",
+            f"🔔 бот #{cfg.bot_id} ({backtick_wrap(cfg.project_name)}) остановлен: найден слот\n"
+            f"начало: {dt_to_markdown(start_time, tz=context.bot.defaults.tzinfo)}",
             kb=kb,
+            parse_mode=ParseMode.MARKDOWN_V2,
         )
 
     async def book(
@@ -90,7 +115,7 @@ class BookingManager:
         context: CustomContext,
         is_staff_slot: bool = False,
     ) -> bool:
-        p2p_points_left = True
+        are_p2p_points_left = True
         cfg = inst.cfg
         try:
             booking_id = self._s21_client.book(
@@ -113,13 +138,14 @@ class BookingManager:
             inst.stats.attempts_success += 1
             await self._messenger.send(
                 context,
-                f"✅ бот #{cfg.bot_id} ({cfg.project_name}): записался\n"
-                f"начало: {dt_to_pretty(start_time, tz=context.bot.defaults.tzinfo)}\n"
+                f"✅ бот #{cfg.bot_id} ({backtick_wrap(cfg.project_name)}): записан\n"
+                f"начало: {dt_to_markdown(start_time, tz=context.bot.defaults.tzinfo)}\n"
                 f"проверок: {inst.stats.currently_booked}/{cfg.required_reviews}",
+                parse_mode=ParseMode.MARKDOWN_V2,
             )
         except School21NoPointsError:
             logger.info("Not enough points to book")
-            p2p_points_left = False
+            are_p2p_points_left = False
             await self._messenger.send(
                 context,
                 f"⛔ бот #{cfg.bot_id} ({cfg.project_name}): остановлен, недостаточно P2P пойнтов",
@@ -141,7 +167,7 @@ class BookingManager:
                 context,
                 f"⚠️ бот #{cfg.bot_id} ({cfg.project_name}): {cancelled_slot_message}",
             )
-        return p2p_points_left
+        return are_p2p_points_left
 
     def pop_dry(self, dry_run_id: str) -> DryBooking | None:
         dry_booking = self._dry_bookings.pop(dry_run_id, None)
@@ -157,6 +183,7 @@ class BookingManager:
             async with self._booking_lock:
                 stale_bookings = self._bookings.copy()
                 self._bookings = fresh_bookings
+            context.chat_data.last_booking_refresh_time = now
             cancelled_bookings = self._get_cancelled_bookings(fresh_bookings, stale_bookings, now, logger)
             await self._notify_on_cancelled_reviews(cancelled_bookings, context, logger)
             for booking_id, booking in fresh_bookings.items():
@@ -198,7 +225,7 @@ class BookingManager:
         logger.info("Sending a notification about an upcoming review of %s at %s", booking.project_name, booking.start)
         link_text = f"\nссылка для подключения: {booking.url}" if booking.url else ""
         text = (
-            f"🔔 проверка проекта {escape_str(booking.project_name)} начинается в {dt_to_pretty_time(booking.start, tz=context.bot.defaults.tzinfo)}!"
+            f"🔔 проверка проекта {backtick_wrap(booking.project_name)} начинается в {dt_to_markdown(booking.start, tz=context.bot.defaults.tzinfo)}!"
             + link_text
         )
         await self._messenger.send(context, text, parse_mode=ParseMode.MARKDOWN_V2)

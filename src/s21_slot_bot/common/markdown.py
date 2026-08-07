@@ -1,3 +1,6 @@
+# KNOWN LIMITATIONS:
+# - can't handle nested mixed formats (e.g. https://core.telegram.org/bots/api#markdownv2-style)
+# - This_project_name is treated as italics (should be manually escaped)
 # taken from https://ithy.com/article/markdownv2-escaping-python-class-8yyfhi3j
 import re
 
@@ -19,7 +22,7 @@ class MarkdownV2Escaper:
             r"__[^_]+__",  # Underline
             r"~[^~]+~",  # Strikethrough
             r"\|\|[^|]+\|\|",  # Spoiler
-            r"\[([^\]]+)\]\(([^)]+)\)",  # Inline URL
+            r"\!*\[([^\]]+)\]\(([^)]+)\)",  # Inline URL / user mention / datetime
             r"`[^`]+`",  # Inline code
             r"(?:[^`]*?)```",  # Code blocks
             r"```python\n[\s\S]*?\n```",  # Python code blocks

@@ -3,6 +3,7 @@ from telegram import CallbackQuery, InlineKeyboardMarkup, Message, ReplyKeyboard
 from telegram.constants import ParseMode
 from telegram.ext import Application, ExtBot
 
+from s21_slot_bot.app.errors import is_not_modified_tg_error
 from s21_slot_bot.app.models import CustomContext, MenuButton
 from s21_slot_bot.common.logger import LoggerLike
 from s21_slot_bot.common.markdown import MarkdownV2Escaper
@@ -22,6 +23,11 @@ class Messenger:
         self._chat_id = chat_id
         self._bot = bot
         self._markdown_escaper = MarkdownV2Escaper()
+
+    async def start_menu(self, update: Update, logger: LoggerLike) -> None:
+        await self.safe_delete(update.message.message_id, logger)
+        message = await update.message.reply_text("...", reply_markup=MAIN_MENU_KB)
+        await self.safe_delete(message.message_id, logger)
 
     async def send(
         self,
@@ -95,7 +101,7 @@ class Messenger:
                 parse_mode=parse_mode,
             )
         except telegram.error.BadRequest as error:
-            if "not modified" in error.message.lower():
+            if is_not_modified_tg_error(error):
                 logger.info("No update has taken place in menu error: %s", error)
                 return
             raise
