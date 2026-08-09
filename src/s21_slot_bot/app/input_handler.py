@@ -76,7 +76,6 @@ class InputHandler:
         self._validate_access(update)
         logger = get_user_input_logger(update)
         query = update.callback_query
-        # TODO: Put "loading" in on_text?
         await query.answer()
         data = query.data or ""
         logger.info("Processing callback `%s`", data)
@@ -115,15 +114,6 @@ class InputHandler:
         logger = get_user_input_logger(update)
         await self._messenger.safe_delete(context.chat_data.menu_error_msg_id, logger)
         context.chat_data.menu_error_msg_id = None
-
-    async def on_stop(self, application: App) -> None:
-        logger = get_id_logger(LogEntity.SERVICE_HOOK)
-        logger.info("Running custom on-stop application hook...")
-        chat_data = application.chat_data.get(self._chat_id)
-        if chat_data:
-            await self._messenger.safe_delete(chat_data.menu_error_msg_id, logger)
-            await self._messenger.safe_delete(chat_data.menu_msg_id, logger)
-            logger.info("Deleted menu messages")
 
     def _validate_access(self, update: Update) -> None:
         message = update.message or update.callback_query.message

@@ -1,3 +1,4 @@
+import asyncio
 import html
 import json
 import re
@@ -5,17 +6,17 @@ import time
 import uuid
 from datetime import datetime, timedelta, tzinfo
 from http import HTTPStatus
-from typing import Any, NoReturn
-from urllib.parse import parse_qs, urljoin, urlparse
+from typing import Any, NoReturn, Self
+from urllib.parse import parse_qs, quote, urljoin, urlparse
 
-# TODO: move to aiohttp?
-import requests
-from requests import HTTPError
+import aiohttp
+from yarl import URL
 
 from s21_slot_bot.client.config import S21ClientConfig
 from s21_slot_bot.client.consts import (
     AUTH_URL,
     CLIENT_ID,
+    DEFAULT_TOKEN_EXPIRATION_SEC,
     GRAPHQL_URL,
     PLATFORM_URL,
     REALM,
@@ -59,12 +60,32 @@ class School21Client:
     def __init__(self, config: S21ClientConfig):
         self._username = config.username
         self._password = config.password
-        self._timeout_sec = config.timeout_sec
+        self._timeout_sec = aiohttp.ClientTimeout(total=config.timeout_sec)
 
-        self._sess = requests.Session()
+        self._auth_lock = asyncio.Lock()
+        self._sess: aiohttp.ClientSession | None = None
         self._tokens: Tokens | None = None
         self._user_id: str | None = None
         self._student_id: str | None = None
+
+    async def start(self) -> None:
+        if self._is_session_open:
+            return
+        self._sess = aiohttp.ClientSession(timeout=self._timeout_sec)
+
+    async def stop(self) -> None:
+        if not self._is_session_open:
+            await self._sess.close()
+
+    @property
+    def _is_session_open(self) -> bool:
+        return self._sess is not None and not self._sess.closed
+
+    @property
+    def _session(self) -> aiohttp.ClientSession:
+        if not self._is_session_open:
+            raise RuntimeError("School21Client не инициализирован")
+        return self._sess
 
     @property
     def _token_endpoint(self) -> str:
@@ -77,7 +98,7 @@ class School21Client:
         return (
             f"{AUTH_URL}/auth/realms/{REALM}/protocol/openid-connect/auth"
             f"?client_id={CLIENT_ID}"
-            f"&redirect_uri={requests.utils.quote(PLATFORM_URL, safe='')}"
+            f"&redirect_uri={quote(PLATFORM_URL, safe='')}"
             f"&state={state}"
             f"&response_mode=fragment"
             f"&response_type=code"
@@ -85,27 +106,36 @@ class School21Client:
             f"&nonce={nonce}"
         )
 
-    def login(self, logger: LoggerLike) -> None:
+    async def login(self, logger: LoggerLike) -> None:
+        async with self._auth_lock:
+            await self._login_unlocked(logger)
+
+    async def _login_unlocked(self, logger: LoggerLike) -> None:
         logger.info("Logging in")
-        auth_resp = self._sess.get(self._auth_endpoint, timeout=self._timeout_sec)
-        try:
-            auth_resp.raise_for_status()
-        except HTTPError as e:
-            raise School21LoginError(f"ошибка авторизации: `{e}`", status=HTTPStatus(auth_resp.status_code)) from e
 
-        action_url = self._extract_login_action(auth_resp.text, AUTH_URL)
-        action_resp = self._sess.post(
+        async with self._session.get(self._auth_endpoint) as auth_resp:
+            auth_text = await auth_resp.text()
+            if not auth_resp.ok:
+                raise School21LoginError(
+                    f"ошибка авторизации: `{auth_resp.reason}`",
+                    status=HTTPStatus(auth_resp.status),
+                )
+
+        action_url = self._extract_login_action(auth_text, AUTH_URL)
+        async with self._session.post(
             action_url,
-            data={"username": self._username, "password": self._password.get_secret_value()},
+            data={
+                "username": self._username,
+                "password": self._password.get_secret_value(),
+            },
             allow_redirects=True,
-            timeout=self._timeout_sec,
-        )
-
-        code = self._extract_code_from_redirect_history(action_resp.history + [action_resp])
+        ) as action_resp:
+            history = list(action_resp.history) + [action_resp]
+            code = self._extract_code_from_redirect_history(history)
         if not code:
-            raise School21LoginError("не удалось извлечь код авторизации", status=HTTPStatus(auth_resp.status_code))
+            raise School21LoginError("не удалось извлечь код авторизации")
 
-        token_resp = self._sess.post(
+        async with self._session.post(
             self._token_endpoint,
             data={
                 "code": code,
@@ -113,26 +143,26 @@ class School21Client:
                 "client_id": CLIENT_ID,
                 "redirect_uri": PLATFORM_URL,
             },
-            headers={"Content-Type": ContentType.APPLICATION_FORM_URL_ENCODED},
-            timeout=self._timeout_sec,
-        )
-        try:
-            token_resp.raise_for_status()
-        except HTTPError as e:
-            raise School21LoginError(
-                f"ошибка при запросе токена: `{e}`", status=HTTPStatus(token_resp.status_code)
-            ) from e
+            headers={
+                "Content-Type": ContentType.APPLICATION_FORM_URL_ENCODED,
+            },
+        ) as token_resp:
+            if not token_resp.ok:
+                raise School21LoginError(
+                    f"ошибка при запросе токена: `{token_resp.reason}`",
+                    status=HTTPStatus(token_resp.status),
+                )
 
-        payload = token_resp.json()
+            payload = await token_resp.json()
 
         self._set_tokens_from_payload(payload)
 
-    def get_user_and_student_id(self, logger: LoggerLike) -> tuple[str, str]:
+    async def get_user_and_student_id(self, logger: LoggerLike) -> tuple[str, str]:
         if self._user_id and self._student_id:
             return self._user_id, self._student_id
 
         operation_name = "getCurrentUser"
-        data = self._graphql(operation_name, Q_GET_USER, {}, logger)
+        data = await self._graphql(operation_name, Q_GET_USER, {}, logger)
         try:
             user_info = data["user"][operation_name]
             user_id, student_id = user_info["id"], user_info["currentSchoolStudentId"]
@@ -142,9 +172,9 @@ class School21Client:
         except Exception as e:
             self._raise_parsing_error(operation_name, e, data)
 
-    def get_reviewed_projects(self, user_id: str, logger: LoggerLike) -> list[Project]:
+    async def get_reviewed_projects(self, user_id: str, logger: LoggerLike) -> list[Project]:
         operation_name = "getStudentCurrentProjects"
-        data = self._graphql(operation_name, Q_GET_CUR_PROJECTS, {"userId": user_id}, logger)
+        data = await self._graphql(operation_name, Q_GET_CUR_PROJECTS, {"userId": user_id}, logger)
         try:
             projects: list[dict[str, Any]] = data["student"][operation_name]
             reviewed_projects: list[Project] = []
@@ -152,7 +182,7 @@ class School21Client:
             for raw_project in projects:
                 project = Project.model_validate(raw_project)
                 if project.course_status == ProjectStatus.IN_PROGRESS and project.course_id:
-                    course_projects = self.get_local_course_goals(project.course_id, logger)
+                    course_projects = await self.get_local_course_goals(project.course_id, logger)
                     course_reviewed_projects = list(
                         filter(lambda p: p.status == ProjectStatus.P2P_EVALUATIONS, course_projects)
                     )
@@ -167,9 +197,9 @@ class School21Client:
         except Exception as e:
             self._raise_parsing_error(operation_name, e, data)
 
-    def get_local_course_goals(self, course_id: str, logger: LoggerLike) -> list[Project]:
+    async def get_local_course_goals(self, course_id: str, logger: LoggerLike) -> list[Project]:
         operation_name = "getLocalCourseGoals"
-        data = self._graphql(operation_name, Q_GET_LOCAL_COURSE_GOALS, {"localCourseId": course_id}, logger)
+        data = await self._graphql(operation_name, Q_GET_LOCAL_COURSE_GOALS, {"localCourseId": course_id}, logger)
         try:
             course_goals: list[dict] = data["course"][operation_name]["localCourseGoals"]
             course_projects = [Project.model_validate(goal) for goal in course_goals]
@@ -182,9 +212,11 @@ class School21Client:
         except Exception as e:
             self._raise_parsing_error(operation_name, e, data)
 
-    def get_review_info(self, goal_id: str, student_id: str, logger: LoggerLike) -> ReviewInfo:
+    async def get_review_info(self, goal_id: str, student_id: str, logger: LoggerLike) -> ReviewInfo:
         operation_name = "getProjectInfo"
-        data = self._graphql(operation_name, Q_GET_PROJECT_INFO, {"goalId": goal_id, "studentId": student_id}, logger)
+        data = await self._graphql(
+            operation_name, Q_GET_PROJECT_INFO, {"goalId": goal_id, "studentId": student_id}, logger
+        )
         try:
             raw_info = data["school21"]["getP2PChecksInfo"]["projectReviewsInfo"]
             review_info = ReviewInfo.model_validate(raw_info)
@@ -193,9 +225,9 @@ class School21Client:
         except Exception as e:
             self._raise_parsing_error(operation_name, e, data)
 
-    def get_task_and_answer(self, module_id: str, logger: LoggerLike) -> tuple[str, str]:
+    async def get_task_and_answer(self, module_id: str, logger: LoggerLike) -> tuple[str, str]:
         operation_name = "calendarGetModule"
-        data = self._graphql(operation_name, Q_GET_MODULE, {"moduleId": module_id}, logger)
+        data = await self._graphql(operation_name, Q_GET_MODULE, {"moduleId": module_id}, logger)
         try:
             cur = data["student"]["getModuleById"]["currentTask"]
             task_id, answer_id = cur["taskId"], cur["lastAnswer"]["id"]
@@ -204,10 +236,10 @@ class School21Client:
         except Exception as e:
             self._raise_parsing_error(operation_name, e, data)
 
-    def get_slots_info(self, task_id: str, from_dt: datetime, to_dt: datetime, logger: LoggerLike) -> SlotsInfo:
+    async def get_slots_info(self, task_id: str, from_dt: datetime, to_dt: datetime, logger: LoggerLike) -> SlotsInfo:
         from_iso_z, to_iso_z = dt_to_isoz(from_dt), dt_to_isoz(to_dt)
         operation_name = "calendarGetNameLessStudentTimeslotsForReview"
-        data = self._graphql(
+        data = await self._graphql(
             operation_name, Q_GET_SLOTS, {"taskId": task_id, "from": from_iso_z, "to": to_iso_z}, logger
         )
         try:
@@ -218,10 +250,10 @@ class School21Client:
         except Exception as e:
             self._raise_parsing_error(operation_name, e, data)
 
-    def get_bookings(self, from_dt: datetime, to_dt: datetime, logger: LoggerLike) -> dict[str, Booking]:
+    async def get_bookings(self, from_dt: datetime, to_dt: datetime, logger: LoggerLike) -> dict[str, Booking]:
         from_iso_z, to_iso_z = dt_to_isoz(from_dt), dt_to_isoz(to_dt)
         operation_name = "calendarGetMyBookings"
-        data = self._graphql(operation_name, Q_GET_BOOKINGS, {"from": from_iso_z, "to": to_iso_z}, logger)
+        data = await self._graphql(operation_name, Q_GET_BOOKINGS, {"from": from_iso_z, "to": to_iso_z}, logger)
         try:
             raw_bookings: list[dict[str, Any]] = data["student"]["getMyCalendarBookings"]
             bookings = {raw["id"]: Booking.model_validate(raw) for raw in raw_bookings}
@@ -230,7 +262,7 @@ class School21Client:
         except Exception as e:
             self._raise_parsing_error(operation_name, e, data)
 
-    def book(
+    async def book(
         self,
         answer_id: str,
         start_time: datetime,
@@ -240,7 +272,7 @@ class School21Client:
     ) -> str:
         start_time_iso_z = dt_to_isoz(start_time)
         operation_name = "calendarAddBookingToEventSlot"
-        data = self._graphql(
+        data = await self._graphql(
             operation_name,
             Q_BOOK,
             {
@@ -258,12 +290,15 @@ class School21Client:
         except Exception as e:
             self._raise_parsing_error(operation_name, e, data)
 
-    def _graphql(
-        self, operation_name: str, query: str, variables: dict[str, Any], logger: LoggerLike
+    async def _graphql(
+        self,
+        operation_name: str,
+        query: str,
+        variables: dict[str, Any],
+        logger: LoggerLike,
     ) -> dict[str, Any]:
         logger.info("Calling `%s` with variables `%s`", operation_name, variables)
-        self._refresh_if_needed(logger)
-
+        await self._refresh_if_needed(logger)
         headers = {
             "Content-Type": ContentType.APPLICATION_JSON,
             "Accept": ContentType.APPLICATION_JSON,
@@ -274,88 +309,83 @@ class School21Client:
             "Origin": PLATFORM_URL,
             "Referer": f"{PLATFORM_URL}/calendar",
         }
-
-        resp = self._sess.post(
+        payload = {
+            "operationName": operation_name,
+            "variables": variables,
+            "query": query,
+        }
+        async with self._session.post(
             GRAPHQL_URL,
-            json={
-                "operationName": operation_name,
-                "variables": variables,
-                "query": query,
-            },
+            json=payload,
             headers=headers,
-            timeout=self._timeout_sec,
-        )
-
-        if resp.status_code in {HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN}:
-            self.login(logger)
-            resp = self._sess.post(
-                GRAPHQL_URL,
-                json={
-                    "operationName": operation_name,
-                    "variables": variables,
-                    "query": query,
-                },
-                headers=headers,
-                timeout=self._timeout_sec,
+        ) as resp:
+            if not resp.ok:
+                text = await resp.text()
+                raise School21Error(
+                    f"ошибка запроса к Школе 21 во время исполнения операции "
+                    f"`{operation_name}`: `{resp.status} {resp.reason}`",
+                    status=HTTPStatus(resp.status),
+                    location={
+                        "operation": operation_name,
+                        "input": variables,
+                        "response": text,
+                    },
+                )
+            data = await resp.json()
+            logger.debug(
+                "Received response from operation `%s`: %s",
+                operation_name,
+                json.dumps(data, indent=2, ensure_ascii=False),
             )
+            if errors := data.get("errors"):
+                self._raise_error_from_response(
+                    operation_name,
+                    variables,
+                    errors,
+                )
+            return data.get("data", {})
 
-        try:
-            resp.raise_for_status()
-        except HTTPError as e:
-            raise School21Error(
-                f"ошибка запроса к Школе 21 во время исполнения операции `{operation_name}`: `{e}`",
-                status=HTTPStatus(resp.status_code),
-                location={"operation": operation_name, "input": variables},
-            ) from e
-
-        data = resp.json()
-        logger.debug(
-            "Received response from operation `%s`: %s",
-            operation_name,
-            json.dumps(data, indent=2, ensure_ascii=False),
-        )
-
-        if errors := data.get("errors"):
-            self._raise_error_from_response(operation_name, variables, errors)
-
-        return data.get("data", {})
-
-    def _refresh_if_needed(self, logger: LoggerLike) -> None:
-        if not self._tokens or not self._tokens.refresh_token:
-            self.login(logger)
+    async def _refresh_if_needed(self, logger: LoggerLike) -> None:
+        if self._are_tokens_valid():
             return
-        if time.time() < self._tokens.expires_at_epoch:
-            return
+        async with self._auth_lock:
+            if self._are_tokens_valid():
+                return
+            if not self._tokens or not self._tokens.refresh_token:
+                await self._login_unlocked(logger)
+                return
 
-        resp = self._sess.post(
-            self._token_endpoint,
-            data={
-                "grant_type": "refresh_token",
-                "client_id": CLIENT_ID,
-                "refresh_token": self._tokens.refresh_token,
-            },
-            headers={"Content-Type": ContentType.APPLICATION_FORM_URL_ENCODED},
-            timeout=self._timeout_sec,
-        )
-        if not resp.ok:
-            logger.warning("Failed to login with status %d, trying again...", resp.status_code)
-            self.login(logger)
-            return
+            async with self._session.post(
+                self._token_endpoint,
+                data={
+                    "grant_type": "refresh_token",
+                    "client_id": CLIENT_ID,
+                    "refresh_token": self._tokens.refresh_token,
+                },
+                headers={"Content-Type": ContentType.APPLICATION_FORM_URL_ENCODED},
+            ) as resp:
+                if not resp.ok:
+                    logger.warning("Failed to refresh token with status %d, trying full login...", resp.status)
+                    await self._login_unlocked(logger)
+                    return
 
-        payload = resp.json()
-        self._set_tokens_from_payload(payload)
+                payload = await resp.json()
+
+            self._set_tokens_from_payload(payload)
+
+    def _are_tokens_valid(self) -> bool:
+        return self._tokens and time.time() < self._tokens.expires_at_epoch
 
     def _set_tokens_from_payload(self, payload: dict[str, Any]) -> None:
         access = payload["access_token"]
         refresh = payload.get("refresh_token", self._tokens.refresh_token if self._tokens else "")
-        expires_in = float(payload.get("expires_in", 300))
+        expires_in = float(payload.get("expires_in", DEFAULT_TOKEN_EXPIRATION_SEC))
         self._tokens = Tokens(
             access_token=access,
             refresh_token=refresh,
             expires_at_epoch=time.time() + expires_in,
         )
-        self._sess.cookies.set("tokenId", access, domain="platform.21-school.ru", path="/")
-        self._sess.cookies.set("tokenId", access, domain=".21-school.ru", path="/")
+        self._session.cookie_jar.update_cookies({"tokenId": access}, response_url=URL(PLATFORM_URL))
 
     def _extract_login_action(self, html_text: str, base_url: str) -> str:
         match = re.search(
@@ -367,16 +397,16 @@ class School21Client:
             raise School21LoginError("не удалось извлечь информацию для авторизации")
         return urljoin(base_url, html.unescape(match.group(1)))
 
-    def _extract_code_from_redirect_history(self, history: list[requests.Response]) -> str | None:
+    def _extract_code_from_redirect_history(self, history: list[aiohttp.ClientResponse]) -> str | None:
         for resp in reversed(history):
-            loc = resp.headers.get("Location") or resp.headers.get("location")
+            loc = resp.headers.get("Location")
             if not loc or "code=" not in loc:
                 continue
-            u = urlparse(loc)
-            if not u.fragment:
+            parsed = urlparse(loc)
+            if not parsed.fragment:
                 continue
-            qs = parse_qs(u.fragment)
-            code = (qs.get("code") or [None])[0]
+            query = parse_qs(parsed.fragment)
+            code = (query.get("code") or [None])[0]
             if code:
                 return code
         return None

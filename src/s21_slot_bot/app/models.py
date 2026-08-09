@@ -106,12 +106,9 @@ class BotInstance(BaseModel):
 
 
 class JobData(BaseModel):
-    s21_client: School21Client
     inst: BotInstance
     task_id: str
     answer_id: str
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class ChatData(BaseModel):

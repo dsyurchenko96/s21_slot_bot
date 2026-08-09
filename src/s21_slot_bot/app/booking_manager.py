@@ -118,7 +118,7 @@ class BookingManager:
         are_p2p_points_left = True
         cfg = inst.cfg
         try:
-            booking_id = self._s21_client.book(
+            booking_id = await self._s21_client.book(
                 answer_id=answer_id,
                 start_time=start_time,
                 is_staff_slot=is_staff_slot,
@@ -179,7 +179,7 @@ class BookingManager:
         now = datetime.now(tz=context.bot.defaults.tzinfo)
         search_to = now + CURRENT_BOOKINGS_SEARCH_WINDOW
         try:
-            fresh_bookings = self._s21_client.get_bookings(now, search_to, logger)
+            fresh_bookings = await self._s21_client.get_bookings(now, search_to, logger)
             async with self._booking_lock:
                 stale_bookings = self._bookings.copy()
                 self._bookings = fresh_bookings

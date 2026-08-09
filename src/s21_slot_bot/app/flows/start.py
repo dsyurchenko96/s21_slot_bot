@@ -114,7 +114,6 @@ class StartFlow(CustomInputFlow):
             case _:
                 raise InvalidCallbackDataError(f"неподдерживаемое действие '{action}' при настройке поиска")
 
-    # TODO: test with multiple projects in review
     async def list_projects(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
         logger = get_user_input_logger(user_input)
         logger.info("Listing projects...")
@@ -128,14 +127,14 @@ class StartFlow(CustomInputFlow):
         action = StartFlowAction.PICK_PROJECT
         self._set_screen(action, context)
         try:
-            user_id, student_id = self._s21_client.get_user_and_student_id(logger)
-            projects_without_review_info = self._s21_client.get_reviewed_projects(user_id, logger)
+            user_id, student_id = await self._s21_client.get_user_and_student_id(logger)
+            projects_without_review_info = await self._s21_client.get_reviewed_projects(user_id, logger)
             if not projects_without_review_info:
                 await self._messenger.render_menu_message(context, "📭 нет активных проектов на проверке", logger)
                 return
             projects: list[ProjectExtended] = []
             for project in projects_without_review_info:
-                review_info = self._s21_client.get_review_info(project.id, student_id, logger)
+                review_info = await self._s21_client.get_review_info(project.id, student_id, logger)
                 projects.append(ProjectExtended.model_validate({**project.model_dump(), "review_info": review_info}))
         except School21Error as e:
             raise MenuError(f"не удалось получить проекты: {e.message}") from e

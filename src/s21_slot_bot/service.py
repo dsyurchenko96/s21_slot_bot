@@ -18,6 +18,7 @@ from s21_slot_bot.app.input_handler import InputHandler
 from s21_slot_bot.app.messenger import Messenger
 from s21_slot_bot.app.models import App, BotData, ChatData, CustomContext
 from s21_slot_bot.client.s21_client import School21Client
+from s21_slot_bot.common.logger import LogEntity, get_id_logger
 from s21_slot_bot.config import SlotBotServiceConfig
 
 
@@ -49,10 +50,9 @@ class SlotBotService:
         self._bot_manager = bot_manager_factory(
             bot_config=config.bot,
             chat_id=self._chat_id,
+            s21_client=self._s21_client,
             messenger=self._messenger,
             booking_manager=self._booking_manager,
-            s21_config=config.s21,
-            s21_client_factory=s21_client_factory,
         )
         self._flows = flow_collector_factory(
             s21_client=self._s21_client,
@@ -69,6 +69,9 @@ class SlotBotService:
 
         self._wire_app_handlers()
 
+    def start(self):
+        self._tg_app.run_polling()
+
     def _build_tg_app(self, tg_app_builder: type[ApplicationBuilder], token: str, timezone: ZoneInfo) -> App:
         defaults = Defaults(tzinfo=timezone)
         context_types = ContextTypes(context=CustomContext, bot_data=BotData, chat_data=ChatData)
@@ -81,7 +84,20 @@ class SlotBotService:
         self._tg_app.add_handler(CallbackQueryHandler(self._input_handler.on_callback))
         self._tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._input_handler.on_text))
         self._tg_app.add_error_handler(self._input_handler.on_error)
-        self._tg_app.post_stop = self._input_handler.on_stop
+        self._tg_app.post_init = self._post_init
+        self._tg_app.post_stop = self._post_stop
 
-    def start(self):
-        self._tg_app.run_polling()
+    async def _post_init(self, _: App) -> None:
+        logger = get_id_logger(LogEntity.SERVICE_HOOK)
+        logger.info("Running custom post-init application hook...")
+        await self._s21_client.start()
+
+    async def _post_stop(self, application: App) -> None:
+        logger = get_id_logger(LogEntity.SERVICE_HOOK)
+        logger.info("Running custom post-stop application hook...")
+        chat_data = application.chat_data.get(self._chat_id)
+        if chat_data:
+            await self._messenger.safe_delete(chat_data.menu_error_msg_id, logger)
+            await self._messenger.safe_delete(chat_data.menu_msg_id, logger)
+            logger.info("Deleted menu messages")
+        await self._s21_client.stop()

@@ -30,6 +30,11 @@ class ContentType(StrEnum):
     APPLICATION_FORM_URL_ENCODED = "application/x-www-form-urlencoded"
 
 
+class GrantType(StrEnum):
+    AUTHORIZATION_CODE = "authorization_code"
+    REFRESH_TOKEN = "refresh_token"
+
+
 class Tokens(BaseModel):
     access_token: str
     refresh_token: str

@@ -35,16 +35,14 @@ class BotManager:
         bot_config: BotConfig,
         chat_id: int,
         messenger: Messenger,
+        s21_client: School21Client,
         booking_manager: BookingManager,
-        s21_config: S21ClientConfig,
-        s21_client_factory: type[School21Client] = School21Client,
     ) -> None:
         self._bot_config = bot_config
         self._chat_id = chat_id
         self._messenger = messenger
+        self._s21_client = s21_client
         self._booking_manager = booking_manager
-        self._s21_config = s21_config
-        self._s21_client_factory = s21_client_factory
         self._bots: dict[str, BotInstance] = {}
 
     @property
@@ -114,9 +112,8 @@ class BotManager:
 
     async def start_bot(self, inst: BotInstance, context: CustomContext, logger: LoggerLike) -> None:
         cfg = inst.cfg
-        s21_client = self._s21_client_factory(config=self._s21_config)
         try:
-            task_id, answer_id = s21_client.get_task_and_answer(cfg.project_id, logger)
+            task_id, answer_id = await self._s21_client.get_task_and_answer(cfg.project_id, logger)
         except Exception as e:
             raise BotRuntimeError(
                 f"бот #{cfg.bot_id}: не удалось получить необходимую информацию для начала поиска"
@@ -124,7 +121,7 @@ class BotManager:
 
         inst.state = Lifecycle.RUNNING
         self._bots[cfg.bot_id] = inst
-        job_data = JobData(s21_client=s21_client, inst=inst, task_id=task_id, answer_id=answer_id)
+        job_data = JobData(inst=inst, task_id=task_id, answer_id=answer_id)
         job = context.application.job_queue.run_repeating(
             self._search, cfg.interval_sec, data=job_data, chat_id=self._chat_id, name=cfg.bot_id
         )
@@ -135,7 +132,7 @@ class BotManager:
     async def _search(self, context: CustomContext) -> None:
         job = context.job
         job_data = JobData.model_validate(job.data)
-        s21_client, inst, answer_id, task_id = job_data.s21_client, job_data.inst, job_data.answer_id, job_data.task_id
+        inst, answer_id, task_id = job_data.inst, job_data.answer_id, job_data.task_id
         logger = inst.logger()
         cfg = inst.cfg
 
@@ -157,8 +154,7 @@ class BotManager:
         inst.stats.last_ping = datetime.now(tz=context.bot.defaults.tzinfo)
 
         try:
-            # TODO: race condition with 2 bots trying to book the same project twice?
-            slots_info = s21_client.get_slots_info(task_id, cfg.from_dt, cfg.to_dt, logger)
+            slots_info = await self._s21_client.get_slots_info(task_id, cfg.from_dt, cfg.to_dt, logger)
             currently_booked = slots_info.review_info.booked
             inst.stats.currently_booked = currently_booked
             missing = cfg.required_reviews - currently_booked
