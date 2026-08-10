@@ -17,6 +17,7 @@ from s21_slot_bot.app.flows.collector import FlowCollector
 from s21_slot_bot.app.input_handler import InputHandler
 from s21_slot_bot.app.messenger import Messenger
 from s21_slot_bot.app.models import App, BotData, ChatData, CustomContext
+from s21_slot_bot.client.middleware import School21AuthMiddleware
 from s21_slot_bot.client.s21_client import School21Client
 from s21_slot_bot.common.logger import LogEntity, get_id_logger
 from s21_slot_bot.config import SlotBotServiceConfig
@@ -26,6 +27,7 @@ class SlotBotService:
     def __init__(
         self,
         config: SlotBotServiceConfig,
+        s21_auth_middleware_factory: type[School21AuthMiddleware] = School21AuthMiddleware,
         s21_client_factory: type[School21Client] = School21Client,
         tg_app_builder: type[ApplicationBuilder] = ApplicationBuilder,
         messenger_factory: type[Messenger] = Messenger,
@@ -34,7 +36,8 @@ class SlotBotService:
         flow_collector_factory: type[FlowCollector] = FlowCollector,
         input_handler_factory: type[InputHandler] = InputHandler,
     ):
-        self._s21_client = s21_client_factory(config=config.s21)
+        s21_auth_middleware = s21_auth_middleware_factory(config=config.s21)
+        self._s21_client = s21_client_factory(config=config.s21, auth_middleware=s21_auth_middleware)
         self._chat_id = config.bot.tg_chat_id.get_secret_value()
         self._tg_app = self._build_tg_app(
             tg_app_builder=tg_app_builder, token=config.tg_token.get_secret_value(), timezone=config.timezone

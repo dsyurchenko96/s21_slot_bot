@@ -1,8 +1,7 @@
-AUTH_URL = "https://auth.21-school.ru"
+AUTH_URL = "https://auth.21-school.ru/auth/realms/EduPowerKeycloak/protocol/openid-connect"
 PLATFORM_URL = "https://platform.21-school.ru"
 GRAPHQL_URL = f"{PLATFORM_URL}/services/graphql"
 DEFAULT_TOKEN_EXPIRATION_SEC = 32400  # 9 hours (default from s21 is 36000 or 10 hours)
-REALM = "EduPowerKeycloak"
 CLIENT_ID = "school21"
 USER_ROLE = "STUDENT"
 X_EDU_ORG_UNIT_ID = "6bfe3c56-0211-4fe1-9e59-51616caac4dd"

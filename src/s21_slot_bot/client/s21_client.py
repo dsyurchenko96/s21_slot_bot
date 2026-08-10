@@ -19,7 +19,6 @@ from s21_slot_bot.client.consts import (
     DEFAULT_TOKEN_EXPIRATION_SEC,
     GRAPHQL_URL,
     PLATFORM_URL,
-    REALM,
     USER_ROLE,
     X_EDU_ORG_UNIT_ID,
     X_EDU_PRODUCT_ID,
@@ -32,6 +31,7 @@ from s21_slot_bot.client.errors import (
     School21ParsingError,
     School21SlotNotFoundError,
 )
+from s21_slot_bot.client.middleware import School21AuthMiddleware
 from s21_slot_bot.client.models import (
     Booking,
     ContentType,
@@ -57,105 +57,38 @@ from s21_slot_bot.common.time import dt_to_isoz
 
 
 class School21Client:
-    def __init__(self, config: S21ClientConfig):
-        self._username = config.username
-        self._password = config.password
+    def __init__(
+        self,
+        config: S21ClientConfig,
+        auth_middleware: School21AuthMiddleware,
+    ):
         self._timeout_sec = aiohttp.ClientTimeout(total=config.timeout_sec)
-
-        self._auth_lock = asyncio.Lock()
-        self._sess: aiohttp.ClientSession | None = None
-        self._tokens: Tokens | None = None
+        self._auth_middleware = auth_middleware
+        self._session_internal: aiohttp.ClientSession | None = None
         self._user_id: str | None = None
         self._student_id: str | None = None
-
-    async def start(self) -> None:
-        if self._is_session_open:
-            return
-        self._sess = aiohttp.ClientSession(timeout=self._timeout_sec)
-
-    async def stop(self) -> None:
-        if not self._is_session_open:
-            await self._sess.close()
-
-    @property
-    def _is_session_open(self) -> bool:
-        return self._sess is not None and not self._sess.closed
 
     @property
     def _session(self) -> aiohttp.ClientSession:
         if not self._is_session_open:
             raise RuntimeError("School21Client не инициализирован")
-        return self._sess
+        return self._session_internal
 
     @property
-    def _token_endpoint(self) -> str:
-        return f"{AUTH_URL}/auth/realms/{REALM}/protocol/openid-connect/token"
+    def _is_session_open(self) -> bool:
+        return self._session_internal is not None and not self._session_internal.closed
 
-    @property
-    def _auth_endpoint(self) -> str:
-        state = str(uuid.uuid4())
-        nonce = str(uuid.uuid4())
-        return (
-            f"{AUTH_URL}/auth/realms/{REALM}/protocol/openid-connect/auth"
-            f"?client_id={CLIENT_ID}"
-            f"&redirect_uri={quote(PLATFORM_URL, safe='')}"
-            f"&state={state}"
-            f"&response_mode=fragment"
-            f"&response_type=code"
-            f"&scope=openid"
-            f"&nonce={nonce}"
+    async def start(self) -> None:
+        if self._is_session_open:
+            return
+        self._session_internal = aiohttp.ClientSession(
+            timeout=self._timeout_sec,
+            middlewares=(self._auth_middleware,),
         )
 
-    async def login(self, logger: LoggerLike) -> None:
-        async with self._auth_lock:
-            await self._login_unlocked(logger)
-
-    async def _login_unlocked(self, logger: LoggerLike) -> None:
-        logger.info("Logging in")
-
-        async with self._session.get(self._auth_endpoint) as auth_resp:
-            auth_text = await auth_resp.text()
-            if not auth_resp.ok:
-                raise School21LoginError(
-                    f"ошибка авторизации: `{auth_resp.reason}`",
-                    status=HTTPStatus(auth_resp.status),
-                )
-
-        action_url = self._extract_login_action(auth_text, AUTH_URL)
-        async with self._session.post(
-            action_url,
-            data={
-                "username": self._username,
-                "password": self._password.get_secret_value(),
-            },
-            allow_redirects=True,
-        ) as action_resp:
-            history = list(action_resp.history) + [action_resp]
-            code = self._extract_code_from_redirect_history(history)
-        if not code:
-            raise School21LoginError("не удалось извлечь код авторизации")
-
-        async with self._session.post(
-            self._token_endpoint,
-            data={
-                "code": code,
-                "grant_type": "authorization_code",
-                "client_id": CLIENT_ID,
-                "redirect_uri": PLATFORM_URL,
-            },
-            headers={
-                "Content-Type": ContentType.APPLICATION_FORM_URL_ENCODED,
-            },
-        ) as token_resp:
-            if not token_resp.ok:
-                raise School21LoginError(
-                    f"ошибка при запросе токена: `{token_resp.reason}`",
-                    status=HTTPStatus(token_resp.status),
-                )
-
-            payload = await token_resp.json()
-
-        self._set_tokens_from_payload(payload)
+    async def stop(self) -> None:
+        if not self._is_session_open:
+            await self._session_internal.close()
 
     async def get_user_and_student_id(self, logger: LoggerLike) -> tuple[str, str]:
         if self._user_id and self._student_id:
@@ -298,7 +231,6 @@ class School21Client:
         logger: LoggerLike,
     ) -> dict[str, Any]:
         logger.info("Calling `%s` with variables `%s`", operation_name, variables)
-        await self._refresh_if_needed(logger)
         headers = {
             "Content-Type": ContentType.APPLICATION_JSON,
             "Accept": ContentType.APPLICATION_JSON,
@@ -344,72 +276,6 @@ class School21Client:
                     errors,
                 )
             return data.get("data", {})
-
-    async def _refresh_if_needed(self, logger: LoggerLike) -> None:
-        if self._are_tokens_valid():
-            return
-        async with self._auth_lock:
-            if self._are_tokens_valid():
-                return
-            if not self._tokens or not self._tokens.refresh_token:
-                await self._login_unlocked(logger)
-                return
-
-            async with self._session.post(
-                self._token_endpoint,
-                data={
-                    "grant_type": "refresh_token",
-                    "client_id": CLIENT_ID,
-                    "refresh_token": self._tokens.refresh_token,
-                },
-                headers={"Content-Type": ContentType.APPLICATION_FORM_URL_ENCODED},
-            ) as resp:
-                if not resp.ok:
-                    logger.warning("Failed to refresh token with status %d, trying full login...", resp.status)
-                    await self._login_unlocked(logger)
-                    return
-
-                payload = await resp.json()
-
-            self._set_tokens_from_payload(payload)
-
-    def _are_tokens_valid(self) -> bool:
-        return self._tokens and time.time() < self._tokens.expires_at_epoch
-
-    def _set_tokens_from_payload(self, payload: dict[str, Any]) -> None:
-        access = payload["access_token"]
-        refresh = payload.get("refresh_token", self._tokens.refresh_token if self._tokens else "")
-        expires_in = float(payload.get("expires_in", DEFAULT_TOKEN_EXPIRATION_SEC))
-        self._tokens = Tokens(
-            access_token=access,
-            refresh_token=refresh,
-            expires_at_epoch=time.time() + expires_in,
-        )
-        self._session.cookie_jar.update_cookies({"tokenId": access}, response_url=URL(PLATFORM_URL))
-
-    def _extract_login_action(self, html_text: str, base_url: str) -> str:
-        match = re.search(
-            r'action\s*=\s*"([^"]*login-actions/authenticate[^"]*)"',
-            html_text,
-            flags=re.IGNORECASE,
-        )
-        if not match:
-            raise School21LoginError("не удалось извлечь информацию для авторизации")
-        return urljoin(base_url, html.unescape(match.group(1)))
-
-    def _extract_code_from_redirect_history(self, history: list[aiohttp.ClientResponse]) -> str | None:
-        for resp in reversed(history):
-            loc = resp.headers.get("Location")
-            if not loc or "code=" not in loc:
-                continue
-            parsed = urlparse(loc)
-            if not parsed.fragment:
-                continue
-            query = parse_qs(parsed.fragment)
-            code = (query.get("code") or [None])[0]
-            if code:
-                return code
-        return None
 
     def _raise_error_from_response(
         self, operation_name: str, variables: dict[str, Any], errors: list[dict[str, Any]]
