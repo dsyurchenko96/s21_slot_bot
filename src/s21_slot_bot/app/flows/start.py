@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 from typing import Any, Callable, Coroutine, cast, override
 
@@ -128,23 +129,27 @@ class StartFlow(CustomInputFlow):
         self._set_screen(action, context)
         try:
             user_id, student_id = await self._s21_client.get_user_and_student_id(logger)
-            projects_without_review_info = await self._s21_client.get_reviewed_projects(user_id, logger)
-            if not projects_without_review_info:
+            projects = await self._s21_client.get_reviewed_projects(user_id, logger)
+            if not projects:
                 await self._messenger.render_menu_message(context, "📭 нет активных проектов на проверке", logger)
                 return
-            projects: list[ProjectExtended] = []
-            for project in projects_without_review_info:
-                review_info = await self._s21_client.get_review_info(project.id, student_id, logger)
-                projects.append(ProjectExtended.model_validate({**project.model_dump(), "review_info": review_info}))
+            projects_extended: list[ProjectExtended] = []
+            review_info_per_project = await asyncio.gather(
+                *[self._s21_client.get_review_info(project.id, student_id, logger) for project in projects]
+            )
+            for project, review_info in zip(projects, review_info_per_project):
+                projects_extended.append(
+                    ProjectExtended.model_validate({**project.model_dump(), "review_info": review_info})
+                )
         except School21Error as e:
             raise MenuError(f"не удалось получить проекты: {e.message}") from e
             # await render_menu(user_input, context, text)
             # return
 
-        context.chat_data.projects_map = {project.id: project for project in projects}
+        context.chat_data.projects_map = {project.id: project for project in projects_extended}
 
-        if len(projects) == 1:
-            project = projects[0]
+        if len(projects_extended) == 1:
+            project = projects_extended[0]
             context.chat_data.start_project_id = project.id
             await self.pick_mode(user_input, context)
             return
@@ -157,7 +162,7 @@ class StartFlow(CustomInputFlow):
                         callback_data=f"{self._category}:{action}:{project.id}",
                     )
                 ]
-                for project in projects[:20]
+                for project in projects_extended[:20]
             ]
         )
         await self._messenger.render_menu_message(context, "выбери проект:", logger, kb=kb)

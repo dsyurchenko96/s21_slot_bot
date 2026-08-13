@@ -1,4 +1,6 @@
+import asyncio
 import json
+from collections.abc import Awaitable
 from datetime import datetime
 from functools import cache, lru_cache
 from http import HTTPStatus
@@ -92,18 +94,22 @@ class School21Client:
         try:
             projects: list[dict[str, Any]] = data["student"][operation_name]
             reviewed_projects: list[Project] = []
+            course_ids: list[str] = []
             logger.info("Processing %d projects in review", len(projects))
             for raw_project in projects:
                 project = Project.model_validate(raw_project)
                 if project.course_status == ProjectStatus.IN_PROGRESS and project.course_id:
-                    course_projects = await self.get_local_course_goals(project.course_id, logger)
-                    course_reviewed_projects = list(
-                        filter(lambda p: p.status == ProjectStatus.P2P_EVALUATIONS, course_projects)
-                    )
-                    reviewed_projects.extend(course_reviewed_projects)
-                    continue
-                if project.status == ProjectStatus.P2P_EVALUATIONS:
+                    course_ids.append(project.course_id)
+                elif project.status == ProjectStatus.P2P_EVALUATIONS:
                     reviewed_projects.append(project)
+            grouped_course_projects = await asyncio.gather(
+                *[self.get_local_course_goals(course_id, logger) for course_id in course_ids]
+            )
+            for course_projects in grouped_course_projects:
+                reviewed_course_projects = list(
+                    filter(lambda p: p.status == ProjectStatus.P2P_EVALUATIONS, course_projects)
+                )
+                reviewed_projects.extend(reviewed_course_projects)
             logger.info("Currently reviewed projects: %s", [project.name for project in reviewed_projects] or "None")
             return reviewed_projects
         except School21Error:
