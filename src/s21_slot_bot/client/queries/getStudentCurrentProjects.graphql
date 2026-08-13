@@ -1,0 +1,32 @@
+query getStudentCurrentProjects($userId: ID!) {
+    student {
+        getStudentCurrentProjects(userId: $userId) {
+            ...StudentProjectItem
+            __typename
+        }
+        __typename
+    }
+}
+
+fragment StudentProjectItem on StudentItem {
+    goalId
+    name
+    description
+    experience
+    dateTime
+    finalPercentage
+    laboriousness
+    executionType
+    goalStatus
+    courseType
+    displayedCourseStatus
+    amountAnswers
+    amountMembers
+    amountJoinedMembers
+    amountReviewedAnswers
+    amountCodeReviewMembers
+    amountCurrentCodeReviewMembers
+    groupName
+    localCourseId
+    __typename
+}

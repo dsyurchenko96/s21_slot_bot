@@ -1,0 +1,86 @@
+query calendarGetMyBookings($from: DateTime!, $to: DateTime!) {
+    student {
+        getMyCalendarBookings(from: $from, to: $to) {
+            ...CalendarReviewBooking
+            __typename
+        }
+        __typename
+    }
+}
+
+fragment CalendarReviewBooking on CalendarBooking {
+    id
+    answerId
+    eventSlotId
+    task {
+        id
+        goalId
+        goalName
+        studentTaskAdditionalAttributes {
+            cookiesCount
+            __typename
+        }
+        assignmentType
+        __typename
+    }
+    eventSlot {
+        id
+        start
+        end
+        event {
+            eventUserRole
+            eventCode
+            __typename
+        }
+        school {
+            shortName
+            __typename
+        }
+        __typename
+    }
+    verifierUser {
+        ...CalendarReviewUser
+        __typename
+    }
+    verifiableInfo {
+        verifiableStudents {
+            ...VerifiableStudentItem
+            __typename
+        }
+        team {
+            name
+            __typename
+        }
+        __typename
+    }
+    bookingStatus
+    isOnline
+    vcLinkUrl
+    additionalChecklist {
+        filledChecklistId
+        filledChecklistStatusRecordingEnum
+        __typename
+    }
+    __typename
+}
+
+fragment CalendarReviewUser on User {
+    id
+    login
+    __typename
+}
+
+fragment VerifiableStudentItem on VerifiableStudent {
+    userId
+    login
+    avatarUrl
+    levelCode
+    isTeamLead
+    cookiesCount
+    codeReviewPoints
+    school {
+        shortName
+        __typename
+    }
+    __typename
+}

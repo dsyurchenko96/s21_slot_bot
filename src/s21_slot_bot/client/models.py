@@ -41,6 +41,17 @@ class Tokens(BaseModel):
     expires_at_epoch: float
 
 
+class OperationName(StrEnum):
+    BOOK = "calendarAddBookingToEventSlot"
+    GET_USER = "getCurrentUser"
+    GET_BOOKINGS = "calendarGetMyBookings"
+    GET_CUR_PROJECTS = "getStudentCurrentProjects"
+    GET_LOCAL_COURSE_GOALS = "getLocalCourseGoals"
+    GET_MODULE = "calendarGetModule"
+    GET_PROJECT_INFO = "getProjectInfo"
+    GET_SLOTS = "calendarGetNameLessStudentTimeslotsForReview"
+
+
 class ProjectStatus(StrEnum):
     UNAVAILABLE = "UNAVAILABLE"
     REGISTRATION_IS_OPEN = "REGISTRATION_IS_OPEN"

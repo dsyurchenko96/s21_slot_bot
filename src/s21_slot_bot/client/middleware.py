@@ -43,16 +43,6 @@ from s21_slot_bot.client.models import (
     SlotsInfo,
     Tokens,
 )
-from s21_slot_bot.client.queries import (
-    Q_BOOK,
-    Q_GET_BOOKINGS,
-    Q_GET_CUR_PROJECTS,
-    Q_GET_LOCAL_COURSE_GOALS,
-    Q_GET_MODULE,
-    Q_GET_PROJECT_INFO,
-    Q_GET_SLOTS,
-    Q_GET_USER,
-)
 from s21_slot_bot.common.logger import LoggerLike
 from s21_slot_bot.common.time import dt_to_isoz
 
@@ -106,18 +96,14 @@ class School21AuthMiddleware:
 
         cookies = request.session.cookie_jar.filter_cookies(request.url)
         cookies["tokenId"] = self._tokens.access_token
-
         request.headers["Cookie"] = cookies.output(header="", sep=";").strip()
 
     async def _ensure_authenticated(self, session: aiohttp.ClientSession) -> None:
         async with self._auth_lock:
             if self._tokens_valid:
                 return
-
-            if self._tokens and self._tokens.refresh_token:
-                if await self._try_refresh(session):
-                    return
-
+            if self._tokens and self._tokens.refresh_token and await self._try_refresh(session):
+                return
             await self._login(session)
 
     async def _force_reauthenticate(self, session: aiohttp.ClientSession) -> None:
@@ -168,12 +154,9 @@ class School21AuthMiddleware:
                 )
             payload = await token_resp.json()
 
-        self._set_tokens(session, payload)
+        self._set_tokens(payload)
 
     async def _try_refresh(self, session: aiohttp.ClientSession) -> bool:
-        if not self._tokens or not self._tokens.refresh_token:
-            return False
-
         async with session.post(
             self._token_endpoint,
             data={
@@ -190,10 +173,10 @@ class School21AuthMiddleware:
                 return False
             payload = await resp.json()
 
-        self._set_tokens(session, payload)
+        self._set_tokens(payload)
         return True
 
-    def _set_tokens(self, session: aiohttp.ClientSession, payload: dict[str, Any]) -> None:
+    def _set_tokens(self, payload: dict[str, Any]) -> None:
         access = payload.get("access_token")
         refresh = payload.get("refresh_token", self._tokens.refresh_token if self._tokens else None)
         if not access or not refresh:
@@ -203,10 +186,6 @@ class School21AuthMiddleware:
             access_token=access,
             refresh_token=refresh,
             expires_at_epoch=time.time() + expires_in,
-        )
-        session.cookie_jar.update_cookies(
-            {"tokenId": access},
-            response_url=URL(PLATFORM_URL),
         )
 
     def _extract_login_action(self, html_text: str, base_url: str) -> str:

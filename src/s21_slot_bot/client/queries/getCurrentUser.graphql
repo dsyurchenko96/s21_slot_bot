@@ -1,0 +1,20 @@
+query getCurrentUser {
+    user {
+        getCurrentUser {
+            ...CurrentUser
+            __typename
+        }
+        __typename
+    }
+}
+
+fragment CurrentUser on User {
+    id
+    avatarUrl
+    login
+    firstName
+    middleName
+    lastName
+    currentSchoolStudentId
+    __typename
+}

@@ -1,0 +1,40 @@
+query calendarGetModule($moduleId: ID!) {
+    student {
+        getModuleById(goalId: $moduleId) {
+            id
+            moduleTitle
+            subjectTitle
+            goalExecutionType
+            currentTask {
+                ...CalendarStudentTask
+                __typename
+            }
+            __typename
+        }
+        __typename
+    }
+}
+
+fragment CalendarStudentTask on StudentTask {
+    id
+    taskId
+    task {
+        id
+        studentTaskAdditionalAttributes {
+            ...CalendarStudentTaskAdditionalAttributes
+            __typename
+        }
+        assignmentType
+        __typename
+    }
+    lastAnswer {
+        id
+        __typename
+    }
+    __typename
+}
+
+fragment CalendarStudentTaskAdditionalAttributes on StudentTaskAdditionalAttributes {
+    cookiesCount
+    __typename
+}

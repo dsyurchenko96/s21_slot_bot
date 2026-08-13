@@ -1,22 +1,15 @@
-import asyncio
-import html
 import json
-import re
-import time
-import uuid
-from datetime import datetime, timedelta, tzinfo
+from datetime import datetime
+from functools import cache, lru_cache
 from http import HTTPStatus
-from typing import Any, NoReturn, Self
-from urllib.parse import parse_qs, quote, urljoin, urlparse
+from importlib.resources import files
+from typing import Any, NoReturn
 
 import aiohttp
-from yarl import URL
 
 from s21_slot_bot.client.config import S21ClientConfig
 from s21_slot_bot.client.consts import (
-    AUTH_URL,
-    CLIENT_ID,
-    DEFAULT_TOKEN_EXPIRATION_SEC,
+    GRAPHQL_QUERIES_MODULE,
     GRAPHQL_URL,
     PLATFORM_URL,
     USER_ROLE,
@@ -26,7 +19,6 @@ from s21_slot_bot.client.consts import (
 from s21_slot_bot.client.errors import (
     School21Error,
     School21ErrorType,
-    School21LoginError,
     School21NoPointsError,
     School21ParsingError,
     School21SlotNotFoundError,
@@ -35,22 +27,11 @@ from s21_slot_bot.client.middleware import School21AuthMiddleware
 from s21_slot_bot.client.models import (
     Booking,
     ContentType,
+    OperationName,
     Project,
-    ProjectExtended,
     ProjectStatus,
     ReviewInfo,
     SlotsInfo,
-    Tokens,
-)
-from s21_slot_bot.client.queries import (
-    Q_BOOK,
-    Q_GET_BOOKINGS,
-    Q_GET_CUR_PROJECTS,
-    Q_GET_LOCAL_COURSE_GOALS,
-    Q_GET_MODULE,
-    Q_GET_PROJECT_INFO,
-    Q_GET_SLOTS,
-    Q_GET_USER,
 )
 from s21_slot_bot.common.logger import LoggerLike
 from s21_slot_bot.common.time import dt_to_isoz
@@ -94,8 +75,8 @@ class School21Client:
         if self._user_id and self._student_id:
             return self._user_id, self._student_id
 
-        operation_name = "getCurrentUser"
-        data = await self._graphql(operation_name, Q_GET_USER, {}, logger)
+        operation_name = OperationName.GET_USER
+        data = await self._graphql(operation_name, {}, logger)
         try:
             user_info = data["user"][operation_name]
             user_id, student_id = user_info["id"], user_info["currentSchoolStudentId"]
@@ -106,8 +87,8 @@ class School21Client:
             self._raise_parsing_error(operation_name, e, data)
 
     async def get_reviewed_projects(self, user_id: str, logger: LoggerLike) -> list[Project]:
-        operation_name = "getStudentCurrentProjects"
-        data = await self._graphql(operation_name, Q_GET_CUR_PROJECTS, {"userId": user_id}, logger)
+        operation_name = OperationName.GET_CUR_PROJECTS
+        data = await self._graphql(operation_name, {"userId": user_id}, logger)
         try:
             projects: list[dict[str, Any]] = data["student"][operation_name]
             reviewed_projects: list[Project] = []
@@ -131,8 +112,8 @@ class School21Client:
             self._raise_parsing_error(operation_name, e, data)
 
     async def get_local_course_goals(self, course_id: str, logger: LoggerLike) -> list[Project]:
-        operation_name = "getLocalCourseGoals"
-        data = await self._graphql(operation_name, Q_GET_LOCAL_COURSE_GOALS, {"localCourseId": course_id}, logger)
+        operation_name = OperationName.GET_LOCAL_COURSE_GOALS
+        data = await self._graphql(operation_name, {"localCourseId": course_id}, logger)
         try:
             course_goals: list[dict] = data["course"][operation_name]["localCourseGoals"]
             course_projects = [Project.model_validate(goal) for goal in course_goals]
@@ -146,10 +127,8 @@ class School21Client:
             self._raise_parsing_error(operation_name, e, data)
 
     async def get_review_info(self, goal_id: str, student_id: str, logger: LoggerLike) -> ReviewInfo:
-        operation_name = "getProjectInfo"
-        data = await self._graphql(
-            operation_name, Q_GET_PROJECT_INFO, {"goalId": goal_id, "studentId": student_id}, logger
-        )
+        operation_name = OperationName.GET_PROJECT_INFO
+        data = await self._graphql(operation_name, {"goalId": goal_id, "studentId": student_id}, logger)
         try:
             raw_info = data["school21"]["getP2PChecksInfo"]["projectReviewsInfo"]
             review_info = ReviewInfo.model_validate(raw_info)
@@ -159,8 +138,8 @@ class School21Client:
             self._raise_parsing_error(operation_name, e, data)
 
     async def get_task_and_answer(self, module_id: str, logger: LoggerLike) -> tuple[str, str]:
-        operation_name = "calendarGetModule"
-        data = await self._graphql(operation_name, Q_GET_MODULE, {"moduleId": module_id}, logger)
+        operation_name = OperationName.GET_MODULE
+        data = await self._graphql(operation_name, {"moduleId": module_id}, logger)
         try:
             cur = data["student"]["getModuleById"]["currentTask"]
             task_id, answer_id = cur["taskId"], cur["lastAnswer"]["id"]
@@ -171,10 +150,8 @@ class School21Client:
 
     async def get_slots_info(self, task_id: str, from_dt: datetime, to_dt: datetime, logger: LoggerLike) -> SlotsInfo:
         from_iso_z, to_iso_z = dt_to_isoz(from_dt), dt_to_isoz(to_dt)
-        operation_name = "calendarGetNameLessStudentTimeslotsForReview"
-        data = await self._graphql(
-            operation_name, Q_GET_SLOTS, {"taskId": task_id, "from": from_iso_z, "to": to_iso_z}, logger
-        )
+        operation_name = OperationName.GET_SLOTS
+        data = await self._graphql(operation_name, {"taskId": task_id, "from": from_iso_z, "to": to_iso_z}, logger)
         try:
             review_data = data["student"]["getNameLessStudentTimeslotsForReview"]
             slots_info = SlotsInfo.model_validate(review_data)
@@ -185,8 +162,8 @@ class School21Client:
 
     async def get_bookings(self, from_dt: datetime, to_dt: datetime, logger: LoggerLike) -> dict[str, Booking]:
         from_iso_z, to_iso_z = dt_to_isoz(from_dt), dt_to_isoz(to_dt)
-        operation_name = "calendarGetMyBookings"
-        data = await self._graphql(operation_name, Q_GET_BOOKINGS, {"from": from_iso_z, "to": to_iso_z}, logger)
+        operation_name = OperationName.GET_BOOKINGS
+        data = await self._graphql(operation_name, {"from": from_iso_z, "to": to_iso_z}, logger)
         try:
             raw_bookings: list[dict[str, Any]] = data["student"]["getMyCalendarBookings"]
             bookings = {raw["id"]: Booking.model_validate(raw) for raw in raw_bookings}
@@ -204,10 +181,9 @@ class School21Client:
         is_online: bool = True,
     ) -> str:
         start_time_iso_z = dt_to_isoz(start_time)
-        operation_name = "calendarAddBookingToEventSlot"
+        operation_name = OperationName.BOOK
         data = await self._graphql(
             operation_name,
-            Q_BOOK,
             {
                 "answerId": answer_id,
                 "startTime": start_time_iso_z,
@@ -225,8 +201,7 @@ class School21Client:
 
     async def _graphql(
         self,
-        operation_name: str,
-        query: str,
+        operation_name: OperationName,
         variables: dict[str, Any],
         logger: LoggerLike,
     ) -> dict[str, Any]:
@@ -241,6 +216,7 @@ class School21Client:
             "Origin": PLATFORM_URL,
             "Referer": f"{PLATFORM_URL}/calendar",
         }
+        query = _get_query(operation_name)
         payload = {
             "operationName": operation_name,
             "variables": variables,
@@ -298,3 +274,9 @@ class School21Client:
         raise School21ParsingError(
             f"не удалось обработать ответ от операции {operation_name}, ошибка: `{error}`", location=data
         ) from error
+
+
+@cache
+def _get_query(operation_name: OperationName) -> str:
+    graphql = files(GRAPHQL_QUERIES_MODULE).joinpath(f"{operation_name}.graphql").read_text(encoding="utf-8").strip()
+    return graphql
