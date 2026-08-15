@@ -1,4 +1,4 @@
-from pydantic import Field, NonNegativeInt, Secret
+from pydantic import Field, Secret
 from pydantic_settings import BaseSettings
 
 from s21_slot_bot.app.models import IntervalSec, NumBots
@@ -12,12 +12,6 @@ class BotConfig(BaseSettings):
     max_bots: NumBots = Field(
         alias="MAX_BOTS",
         description="Maximum number of total bots at a time",
-        default=3,
-    )
-    max_retries: NonNegativeInt = Field(
-        alias="MAX_RETRIES",
-        description="Maximum number of request retries in a running bot loop before an error message is sent to the chat. "
-        "Set to 0 to disable",
         default=3,
     )
     poll_interval_sec: IntervalSec = Field(

@@ -189,18 +189,14 @@ class BotManager:
                     )
                     if not are_p2p_points_left:
                         self.stop_bot(cfg.bot_id, context, logger)
-            inst.stats.failed_retry = 0
         except Exception as e:
             inst.stats.attempts_failed += 1
-            inst.stats.failed_retry += 1
             logger.exception(
-                "Failed attempt %d (retry %d) running bot %s",
+                "Failed attempt %d running bot %s",
                 inst.stats.attempts_failed,
-                inst.stats.failed_retry,
                 cfg.bot_id,
             )
-            if inst.stats.failed_retry % self._bot_config.max_retries == 0:
-                raise BotRuntimeError(f"бот #{cfg.bot_id} ({cfg.project_name}): ошибка поиска") from e
+            raise BotRuntimeError(f"бот #{cfg.bot_id} ({cfg.project_name}): ошибка поиска") from e
 
     def _pick_candidate_start(self, timeslots: list[TimeSlot]) -> tuple[datetime, bool] | None:
         candidates: list[tuple[datetime, bool]] = []

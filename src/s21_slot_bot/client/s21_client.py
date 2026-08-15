@@ -25,7 +25,8 @@ from s21_slot_bot.client.errors import (
     School21ParsingError,
     School21SlotNotFoundError,
 )
-from s21_slot_bot.client.middleware import School21AuthMiddleware
+from s21_slot_bot.client.middleware.auth import School21AuthMiddleware
+from s21_slot_bot.client.middleware.retry import School21RetryMiddleware
 from s21_slot_bot.client.models import (
     Booking,
     ContentType,
@@ -44,9 +45,11 @@ class School21Client:
         self,
         config: S21ClientConfig,
         auth_middleware: School21AuthMiddleware,
+        retry_middleware: School21RetryMiddleware,
     ):
         self._timeout_sec = aiohttp.ClientTimeout(total=config.timeout_sec)
         self._auth_middleware = auth_middleware
+        self._retry_middleware = retry_middleware
         self._session_internal: aiohttp.ClientSession | None = None
         self._user_id: str | None = None
         self._student_id: str | None = None
@@ -66,7 +69,10 @@ class School21Client:
             return
         self._session_internal = aiohttp.ClientSession(
             timeout=self._timeout_sec,
-            middlewares=(self._auth_middleware,),
+            middlewares=(
+                self._retry_middleware,
+                self._auth_middleware,
+            ),
         )
 
     async def stop(self) -> None:

@@ -26,6 +26,7 @@ class LogLevel(IntEnum):
 class LogEntity(StrEnum):
     BOT = enum.auto()
     BOOKING_REFRESHER = enum.auto()
+    MIDDLEWARE = enum.auto()
     USER_INPUT = enum.auto()
     SERVICE_HOOK = enum.auto()
     UNKNOWN = enum.auto()

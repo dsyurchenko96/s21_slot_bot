@@ -84,7 +84,6 @@ class Stats(BaseModel):
     attempts_total: PositiveInt = 0
     attempts_success: PositiveInt = 0
     attempts_failed: PositiveInt = 0
-    failed_retry: PositiveInt = 0
     currently_booked: PositiveInt = 0
 
 
