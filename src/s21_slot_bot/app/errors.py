@@ -31,5 +31,8 @@ class InternalError(Error):
 class BotRuntimeError(InternalError): ...
 
 
+class AppNotInitializedError(InternalError): ...
+
+
 def is_not_modified_tg_error(error: telegram.error.BadRequest) -> bool:
     return "not modified" in error.message.lower()

@@ -10,6 +10,7 @@ from s21_slot_bot.app.flows.actions import FlowAction, InputFlowAction
 from s21_slot_bot.app.messenger import Messenger
 from s21_slot_bot.app.models import CustomContext, FlowCategory, Mode, Screen
 from s21_slot_bot.client.consts import MIN_REQUIRED_REVIEWS
+from s21_slot_bot.client.models import ProjectExtended
 from s21_slot_bot.client.s21_client import School21Client
 from s21_slot_bot.common.logger import get_user_input_logger
 
@@ -49,8 +50,6 @@ class CustomInputFlow(Flow, ABC):
         logger.info("Picking mode in category `%s`...", self._category)
         action = InputFlowAction.PICK_MODE
         prev_action = self._get_prev_action(action, context)
-        # action = StartFlowAction.PICK_MODE
-        # self._screen_set(context, Screen.START_PICK_MODE)
         self._set_screen(action, context)
         buttons = [
             [
@@ -81,16 +80,14 @@ class CustomInputFlow(Flow, ABC):
 
     async def pick_num_reviews(
         self,
-        query: CallbackQuery,
+        user_input: Update | CallbackQuery,
         context: CustomContext,
     ) -> None:
-        logger = get_user_input_logger(query)
+        logger = get_user_input_logger(user_input)
         logger.info("Picking number of reviews in category `%s`...", self._category)
         action = InputFlowAction.PICK_NUM_REVIEWS
         prev_action = self._get_prev_action(action, context)
-        project = context.chat_data.projects_map[context.chat_data.start_project_id]
-        # action = StartFlowAction.PICK_NUM_REVIEWS
-        # self._screen_set(context, Screen.START_PICK_NUM)
+        project = self._get_project(context)
         self._set_screen(action, context)
         buttons = [
             [
@@ -123,14 +120,7 @@ class CustomInputFlow(Flow, ABC):
         logger.info("Picking search start time in category `%s`...", self._category)
         action = InputFlowAction.PICK_FROM
         prev_action = self._get_prev_action(action, context)
-        # action = StartFlowAction.PICK_FROM
-        # context.chat_data.screen = Screen.START_PICK_FROM
         self._set_screen(action, context)
-        # prev_action = (
-        #     StartFlowAction.PICK_NUM_REVIEWS
-        #     if context.chat_data.start_mode == Mode.FIND_AND_BOOK
-        #     else StartFlowAction.PICK_MODE
-        # )
         buttons = [
             [
                 InlineKeyboardButton("сейчас", callback_data=f"{self._category}:{action}:PT0S"),
@@ -155,22 +145,6 @@ class CustomInputFlow(Flow, ABC):
         )
         await self._messenger.render_menu_message(context, text, logger, kb=kb, parse_mode=ParseMode.MARKDOWN_V2)
 
-    # @abstractmethod
-    # async def custom_from(self, update: Update, context: CustomContext) -> None:
-    #     raise NotImplementedError
-
-    # logger = get_user_input_logger(update)
-    # logger.info("Parsing custom search start time...")
-    # try:
-    #     now = datetime.now(tz=context.bot.defaults.tzinfo)
-    #     start_from = str_to_dt_with_from(update.message.text, context.bot.defaults.tzinfo, now, logger)
-    #     context.chat_data.start_from = start_from
-    # except InvalidUserInputError as e:
-    #     await self.pick_from(update, context)
-    #     raise e
-    #
-    # await self.pick_to(update, context)
-
     async def pick_to(
         self,
         user_input: Update | CallbackQuery,
@@ -180,8 +154,6 @@ class CustomInputFlow(Flow, ABC):
         logger.info("Picking search end time in category `%s`...", self._category)
         action = InputFlowAction.PICK_TO
         prev_action = self._get_prev_action(action, context)
-        # action = StartFlowAction.PICK_TO
-        # context.chat_data.screen = Screen.START_PICK_TO
         self._set_screen(action, context)
         buttons = [
             [
@@ -207,29 +179,13 @@ class CustomInputFlow(Flow, ABC):
         )
         await self._messenger.render_menu_message(context, text, logger, kb=kb, parse_mode=ParseMode.MARKDOWN_V2)
 
-    # @abstractmethod
-    # async def custom_to(self, update: Update, context: CustomContext) -> None:
-    #     raise NotImplementedError
-
-    # logger = get_user_input_logger(update)
-    # logger.info("Parsing custom search end time...")
-    # try:
-    #     start_from = context.chat_data.start_from
-    #     if not start_from:
-    #         raise InternalError("начальное время поиска не задано", location=context.chat_data.model_dump())
-    #     start_to = str_to_dt_with_from(update.message.text, context.bot.defaults.tzinfo, start_from, logger)
-    #     if start_to <= start_from:
-    #         raise InvalidUserInputError(f"конечное время должно быть позже начального ({dt_to_pretty(start_to)})")
-    #     context.chat_data.start_to = start_to
-    # except InvalidUserInputError as e:
-    #     await self.pick_to(update, context)
-    #     raise e
-    #
-    # await self.confirm(update, context)
-
     def _set_screen(self, action: FlowAction, context: CustomContext) -> None:
         screen = self._action_to_screen.get(action) or Screen.MENU
-        context.chat_data.screen = screen
+        context.ensured_chat_data.screen = screen
+
+    @abstractmethod
+    def _get_project(self, context: CustomContext) -> ProjectExtended:
+        raise NotImplementedError
 
     @abstractmethod
     def _get_prev_action(self, action: FlowAction, context: CustomContext) -> FlowAction | None:

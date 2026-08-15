@@ -1,5 +1,3 @@
-import logging.config
-
 from s21_slot_bot.config import SlotBotServiceConfig
 from s21_slot_bot.logging_config import setup_logging
 from s21_slot_bot.service import SlotBotService

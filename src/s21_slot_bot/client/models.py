@@ -1,10 +1,7 @@
-from datetime import datetime
 from enum import StrEnum
 from typing import Annotated
-from zoneinfo import ZoneInfo
 
 from pydantic import (
-    AfterValidator,
     AliasPath,
     AwareDatetime,
     BaseModel,
@@ -15,7 +12,6 @@ from pydantic import (
     PositiveInt,
 )
 from pydantic.alias_generators import to_camel
-from pydantic_core.core_schema import ValidationInfo
 
 from s21_slot_bot.client.consts import MAX_REQUIRED_REVIEWS
 
@@ -66,7 +62,9 @@ class S21Model(BaseModel):
 
 
 class Project(S21Model):
-    id: CoercedStr | None = Field(default=None, description="Project ID", alias="goalId")
+    id: CoercedStr | None = Field(
+        default=None, description="Project ID, may be missing for course projects", alias="goalId"
+    )
     name: str = Field(description="Project name", alias="goalName")
     course_id: CoercedStr | None = Field(default=None, description="Course ID", alias="localCourseId")
     course_status: ProjectStatus | None = Field(
@@ -76,6 +74,7 @@ class Project(S21Model):
 
 
 class ProjectExtended(Project):
+    id: str
     review_info: ReviewInfo
 
 

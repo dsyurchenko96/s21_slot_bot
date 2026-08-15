@@ -1,6 +1,4 @@
-from zoneinfo import ZoneInfo
-
-from pydantic import Field, NonNegativeInt, PositiveInt, Secret
+from pydantic import Field, NonNegativeInt, Secret
 from pydantic_settings import BaseSettings
 
 from s21_slot_bot.app.models import IntervalSec, NumBots

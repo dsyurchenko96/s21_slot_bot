@@ -1,12 +1,12 @@
 from zoneinfo import ZoneInfo
 
 from telegram.ext import (
-    Application,
     ApplicationBuilder,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     Defaults,
+    JobQueue,
     MessageHandler,
     filters,
 )
@@ -16,7 +16,7 @@ from s21_slot_bot.app.bot_manager import BotManager
 from s21_slot_bot.app.flows.collector import FlowCollector
 from s21_slot_bot.app.input_handler import InputHandler
 from s21_slot_bot.app.messenger import Messenger
-from s21_slot_bot.app.models import App, BotData, ChatData, CustomContext
+from s21_slot_bot.app.models import App, AppBuilder, BotData, ChatData, CustomContext
 from s21_slot_bot.client.middleware import School21AuthMiddleware
 from s21_slot_bot.client.s21_client import School21Client
 from s21_slot_bot.common.logger import LogEntity, get_id_logger
@@ -29,7 +29,7 @@ class SlotBotService:
         config: SlotBotServiceConfig,
         s21_auth_middleware_factory: type[School21AuthMiddleware] = School21AuthMiddleware,
         s21_client_factory: type[School21Client] = School21Client,
-        tg_app_builder: type[ApplicationBuilder] = ApplicationBuilder,
+        tg_app_builder: type[AppBuilder] = ApplicationBuilder,
         messenger_factory: type[Messenger] = Messenger,
         bot_manager_factory: type[BotManager] = BotManager,
         booking_manager_factory: type[BookingManager] = BookingManager,
@@ -72,16 +72,17 @@ class SlotBotService:
 
         self._wire_app_handlers()
 
-    def start(self):
+    def start(self) -> None:
         self._tg_app.run_polling()
 
-    def _build_tg_app(self, tg_app_builder: type[ApplicationBuilder], token: str, timezone: ZoneInfo) -> App:
+    def _build_tg_app(self, tg_app_builder: type[AppBuilder], token: str, timezone: ZoneInfo) -> App:
         defaults = Defaults(tzinfo=timezone)
         context_types = ContextTypes(context=CustomContext, bot_data=BotData, chat_data=ChatData)
-        app = tg_app_builder().token(token).context_types(context_types).defaults(defaults).build()
+        job_queue: JobQueue[CustomContext] = JobQueue()
+        app = tg_app_builder().token(token).context_types(context_types).job_queue(job_queue).defaults(defaults).build()
         return app
 
-    def _wire_app_handlers(self):
+    def _wire_app_handlers(self) -> None:
         # TODO: check in a new chat
         self._tg_app.add_handler(CommandHandler("start", self._input_handler.on_cmd_start))
         self._tg_app.add_handler(CallbackQueryHandler(self._input_handler.on_callback))

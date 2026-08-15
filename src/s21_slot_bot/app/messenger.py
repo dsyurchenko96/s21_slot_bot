@@ -1,10 +1,9 @@
 import telegram.error
-from telegram import CallbackQuery, InlineKeyboardMarkup, Message, ReplyKeyboardMarkup, Update
+from telegram import InlineKeyboardMarkup, Message, ReplyKeyboardMarkup, Update
 from telegram.constants import ParseMode
-from telegram.ext import Application, ExtBot
 
-from s21_slot_bot.app.errors import is_not_modified_tg_error
-from s21_slot_bot.app.models import CustomContext, MenuButton
+from s21_slot_bot.app.errors import InternalError, is_not_modified_tg_error
+from s21_slot_bot.app.models import Bot, CustomContext, MenuButton
 from s21_slot_bot.common.logger import LoggerLike
 from s21_slot_bot.common.markdown import MarkdownV2Escaper
 
@@ -19,12 +18,14 @@ MAIN_MENU_KB = ReplyKeyboardMarkup(
 
 
 class Messenger:
-    def __init__(self, chat_id: int, bot: ExtBot):
+    def __init__(self, chat_id: int, bot: Bot):
         self._chat_id = chat_id
         self._bot = bot
         self._markdown_escaper = MarkdownV2Escaper()
 
     async def start_menu(self, update: Update, logger: LoggerLike) -> None:
+        if not update.message:
+            raise InternalError("сообщение не найдено")
         await self.safe_delete(update.message.message_id, logger)
         message = await update.message.reply_text("...", reply_markup=MAIN_MENU_KB)
         await self.safe_delete(message.message_id, logger)
@@ -65,16 +66,16 @@ class Messenger:
         parse_mode: ParseMode | None = None,
     ) -> None:
         if context.bot_data.chat_should_move_menu.get(self._chat_id):
-            await self.safe_delete(context.chat_data.menu_msg_id, logger)
+            await self.safe_delete(context.ensured_chat_data.menu_msg_id, logger)
             context.bot_data.chat_should_move_menu[self._chat_id] = False
-            context.chat_data.menu_msg_id = None
+            context.ensured_chat_data.menu_msg_id = None
 
-        context.chat_data.menu_msg_id = await self._ensure_message(context.chat_data.menu_msg_id)
+        context.ensured_chat_data.menu_msg_id = await self._ensure_message(context.ensured_chat_data.menu_msg_id)
         if parse_mode == ParseMode.MARKDOWN_V2:
             text = self._markdown_escaper.escape(text)
         await self._bot.edit_message_text(
             chat_id=self._chat_id,
-            message_id=context.chat_data.menu_msg_id,
+            message_id=context.ensured_chat_data.menu_msg_id,
             text=text,
             reply_markup=kb,
             parse_mode=parse_mode,
@@ -88,14 +89,16 @@ class Messenger:
         kb: InlineKeyboardMarkup | None = None,
         parse_mode: ParseMode | None = None,
     ) -> None:
-        context.chat_data.menu_error_msg_id = await self._ensure_message(context.chat_data.menu_error_msg_id)
+        context.ensured_chat_data.menu_error_msg_id = await self._ensure_message(
+            context.ensured_chat_data.menu_error_msg_id
+        )
 
         if parse_mode == ParseMode.MARKDOWN_V2:
             text = self._markdown_escaper.escape(text)
         try:
             await self._bot.edit_message_text(
                 chat_id=self._chat_id,
-                message_id=context.chat_data.menu_error_msg_id,
+                message_id=context.ensured_chat_data.menu_error_msg_id,
                 text=text,
                 reply_markup=kb,
                 parse_mode=parse_mode,
@@ -113,6 +116,5 @@ class Messenger:
         message = await self._bot.send_message(
             self._chat_id,
             "...",
-            # reply_markup=MAIN_MENU_KB,
         )
         return message.message_id

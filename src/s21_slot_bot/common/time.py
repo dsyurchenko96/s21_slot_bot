@@ -1,11 +1,9 @@
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from datetime import time as dt_time
-from typing import Annotated, Callable
-from zoneinfo import ZoneInfo
 
 import pydantic
-from pydantic import AfterValidator, AwareDatetime, TypeAdapter
-from pydantic_core.core_schema import ValidationInfo
+from pydantic import AwareDatetime, TypeAdapter
 from telegram.helpers import escape_markdown
 
 from s21_slot_bot.app.errors import InvalidUserInputError
@@ -17,26 +15,6 @@ DateAdapter = TypeAdapter(date)
 TimeAdapter = TypeAdapter(dt_time)
 DatetimeAdapter = TypeAdapter(datetime)
 TimedeltaAdapter = TypeAdapter(timedelta)
-
-#
-# def _convert_to_config_timezone(
-#     value: datetime,
-#     info: ValidationInfo,
-# ) -> datetime:
-#     timezone = None
-#     if info.context:
-#         timezone = info.context.get("timezone")
-#     if timezone is None:
-#         return value
-#     if not isinstance(timezone, ZoneInfo):
-#         raise TypeError("validation context timezone must be ZoneInfo")
-#     return value.astimezone(timezone)
-#
-#
-# ConfiguredAwareDatetime = Annotated[
-#     AwareDatetime,
-#     AfterValidator(_convert_to_config_timezone),
-# ]
 
 
 # NOTE: requests should be sent only with UTC

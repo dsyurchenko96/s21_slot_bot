@@ -1,5 +1,6 @@
+from collections.abc import Callable, Coroutine
 from datetime import datetime
-from typing import Any, Callable, Coroutine, cast, override
+from typing import Any, cast, override
 
 import pydantic
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -17,7 +18,9 @@ from s21_slot_bot.app.models import (
     RequiredReviewsAdapter,
     Screen,
 )
+from s21_slot_bot.app.utils import get_message_text, get_tzinfo
 from s21_slot_bot.client.consts import MIN_REQUIRED_REVIEWS
+from s21_slot_bot.client.models import ProjectExtended
 from s21_slot_bot.common.logger import LoggerLike, get_user_input_logger
 from s21_slot_bot.common.strings import backtick_wrap
 from s21_slot_bot.common.time import dt_to_pretty, parse_to_datetime
@@ -43,6 +46,15 @@ class EditFlow(CustomInputFlow):
         }
 
     @override
+    def _get_project(self, context: CustomContext) -> ProjectExtended:
+        bot_id = context.ensured_chat_data.edit_bot_id
+        if not bot_id:
+            raise InternalError("бот не существует")
+        inst = self._bot_manager.get_bot(bot_id)
+        project = context.ensured_chat_data.projects_map[inst.cfg.project_id]
+        return project
+
+    @override
     def _get_prev_action(self, action: FlowAction, context: CustomContext) -> FlowAction | None:
         match action:
             case EditFlowAction.SHOW_MENU:
@@ -54,12 +66,13 @@ class EditFlow(CustomInputFlow):
     def _get_chosen_project_info_text(
         self, context: CustomContext, action: FlowAction | None = None, is_markdown: bool = False
     ) -> str:
-        bot_id = context.chat_data.edit_bot_id
+        bot_id = context.ensured_chat_data.edit_bot_id
         inst = self._bot_manager.get_bot(bot_id)
         c = inst.cfg
         project_name = backtick_wrap(c.project_name) if is_markdown else c.project_name
-        from_pretty = dt_to_pretty(c.from_dt, tz=context.bot.defaults.tzinfo)
-        to_pretty = dt_to_pretty(c.to_dt, tz=context.bot.defaults.tzinfo)
+        tz = get_tzinfo(context)
+        from_pretty = dt_to_pretty(c.from_dt, tz=tz)
+        to_pretty = dt_to_pretty(c.to_dt, tz=tz)
         text = (
             f"✏️ бот #{c.bot_id} ({project_name})\n"
             f"окно: {from_pretty} → {to_pretty}\n"
@@ -74,10 +87,11 @@ class EditFlow(CustomInputFlow):
     async def parse_callback(self, callback_data: list[str], query: CallbackQuery, context: CustomContext) -> None:
         logger = get_user_input_logger(query)
         action = callback_data.pop()
+        bot_id: str | None
         match action:
             case EditFlowAction.PICK_BOT:
                 bot_id = callback_data.pop()
-                context.chat_data.edit_bot_id = bot_id
+                context.ensured_chat_data.edit_bot_id = bot_id
                 await self.edit_menu(query, context)
             case EditFlowAction.MENU_FROM:
                 await self.pick_from(query, context)
@@ -92,7 +106,7 @@ class EditFlow(CustomInputFlow):
             case EditFlowAction.MENU_MODE:
                 await self.pick_mode(query, context)
             case InputFlowAction.PICK_MODE:
-                bot_id = context.chat_data.edit_bot_id
+                bot_id = context.ensured_chat_data.edit_bot_id
                 inst = self._bot_manager.get_bot(bot_id)
                 mode = Mode(callback_data.pop())
                 if mode == inst.cfg.mode:
@@ -106,7 +120,7 @@ class EditFlow(CustomInputFlow):
                     case Mode.FIND_AND_BOOK:
                         await self.pick_num_reviews(query, context)
             case EditFlowAction.MENU_NUM_REVIEWS:
-                bot_id = context.chat_data.edit_bot_id
+                bot_id = context.ensured_chat_data.edit_bot_id
                 inst = self._bot_manager.get_bot(bot_id)
                 match inst.cfg.mode:
                     case Mode.ONLY_FIND:
@@ -118,7 +132,7 @@ class EditFlow(CustomInputFlow):
                         await self.pick_num_reviews(query, context)
             case InputFlowAction.PICK_NUM_REVIEWS:
                 num_reviews = RequiredReviewsAdapter.validate_strings(callback_data.pop())
-                bot_id = context.chat_data.edit_bot_id
+                bot_id = context.ensured_chat_data.edit_bot_id
                 inst = self._bot_manager.get_bot(bot_id)
                 update_text = "✅ количество проверок обновлено" if inst.cfg.required_reviews != num_reviews else ""
                 inst.cfg.required_reviews = num_reviews
@@ -127,11 +141,11 @@ class EditFlow(CustomInputFlow):
                 await self.edit_interval(query, context)
             case EditFlowAction.SET_INTERVAL:
                 interval = IntervalSecAdapter.validate_strings(callback_data.pop())
-                bot_id = context.chat_data.edit_bot_id
+                bot_id = context.ensured_chat_data.edit_bot_id
                 inst = self._bot_manager.get_bot(bot_id)
                 update_text = ""
                 if inst.cfg.interval_sec != interval:
-                    self._bot_manager.stop_bot(bot_id, context, logger)
+                    self._bot_manager.stop_bot(inst.cfg.bot_id, context, logger)
                     inst.cfg.interval_sec = interval
                     await self._bot_manager.start_bot(inst, context, logger)
                     update_text = "✅ интервал обновлен, бот перезапущен"
@@ -147,8 +161,8 @@ class EditFlow(CustomInputFlow):
             case _:
                 raise InvalidCallbackDataError(f"неподдерживаемое действие '{action}' при редактировании бота")
 
-    async def list_bots(self, update: Update, context: CustomContext) -> None:
-        logger = get_user_input_logger(update)
+    async def list_bots(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
+        logger = get_user_input_logger(user_input)
         logger.info("Listing bots...")
         bots = self._bot_manager.list_all()
         if not bots:
@@ -205,38 +219,42 @@ class EditFlow(CustomInputFlow):
 
     def _set_from(self, text: str, context: CustomContext, logger: LoggerLike) -> None:
         logger.info("Editing custom search start time...")
-        now = datetime.now(tz=context.bot.defaults.tzinfo)
-        bot_id = context.chat_data.edit_bot_id
+        tz = get_tzinfo(context)
+        now = datetime.now(tz=tz)
+        bot_id = context.ensured_chat_data.edit_bot_id
         inst = self._bot_manager.get_bot(bot_id)
-        from_dt = parse_to_datetime(text, context.bot.defaults.tzinfo, now, logger)
+        from_dt = parse_to_datetime(text, tz, now, logger)
         if from_dt >= inst.cfg.to_dt:
             raise InvalidUserInputError(
-                f"начальное время должно быть раньше конечного ({dt_to_pretty(inst.cfg.to_dt, tz=context.bot.defaults.tzinfo)})"
+                f"начальное время должно быть раньше конечного ({dt_to_pretty(inst.cfg.to_dt, tz=tz)})"
             )
         inst.cfg.from_dt = from_dt
 
     async def edit_custom_from(self, update: Update, context: CustomContext) -> None:
         logger = get_user_input_logger(update)
-        self._set_from(update.message.text, context, logger)
+        text = get_message_text(update)
+        self._set_from(text, context, logger)
         await self.edit_menu(update, context, update_text="✅ начальное время обновлено")
 
     def _set_to(self, text: str, context: CustomContext, logger: LoggerLike) -> None:
         logger.info("Editing custom search start time...")
-        bot_id = context.chat_data.edit_bot_id
+        bot_id = context.ensured_chat_data.edit_bot_id
         inst = self._bot_manager.get_bot(bot_id)
+        tz = get_tzinfo(context)
         from_dt = inst.cfg.from_dt
         if not from_dt:
-            raise InternalError("начальное время поиска не задано", location=context.chat_data.model_dump())
-        to_dt = parse_to_datetime(text, context.bot.defaults.tzinfo, from_dt, logger)
+            raise InternalError("начальное время поиска не задано", location=context.ensured_chat_data.model_dump())
+        to_dt = parse_to_datetime(text, tz, from_dt, logger)
         if to_dt <= inst.cfg.from_dt:
             raise InvalidUserInputError(
-                f"конечное время должно быть позже начального ({dt_to_pretty(inst.cfg.from_dt, tz=context.bot.defaults.tzinfo)})"
+                f"конечное время должно быть позже начального ({dt_to_pretty(inst.cfg.from_dt, tz=tz)})"
             )
         inst.cfg.to_dt = to_dt
 
     async def edit_custom_to(self, update: Update, context: CustomContext) -> None:
         logger = get_user_input_logger(update)
-        self._set_to(update.message.text, context, logger)
+        text = get_message_text(update)
+        self._set_to(text, context, logger)
         await self.edit_menu(update, context, update_text="✅ конечное время обновлено")
 
     async def edit_interval(
@@ -274,22 +292,23 @@ class EditFlow(CustomInputFlow):
     async def edit_custom_interval(self, update: Update, context: CustomContext) -> None:
         logger = get_user_input_logger(update)
         logger.info("Editing custom interval...")
-        bot_id = context.chat_data.edit_bot_id
+        bot_id = context.ensured_chat_data.edit_bot_id
         try:
             inst = self._bot_manager.get_bot(bot_id)
-            interval_sec = IntervalSecAdapter.validate_strings(update.message.text)
+            text = get_message_text(update)
+            interval_sec = IntervalSecAdapter.validate_strings(text)
         except pydantic.ValidationError as e:
             raise InvalidUserInputError(
                 f"интервал может быть задан только от {MIN_INTERVAL_SEC} до {MAX_INTERVAL_SEC} секунд"
             ) from e
         inst.cfg.interval_sec = interval_sec
-        self._bot_manager.stop_bot(bot_id, context, logger)
+        self._bot_manager.stop_bot(inst.cfg.bot_id, context, logger)
         await self._bot_manager.start_bot(inst, context, logger)
         await self.edit_menu(update, context, update_text="✅ интервал обновлен, бот перезапущен")
 
     async def edit_restart(self, query: CallbackQuery, context: CustomContext) -> None:
         logger = get_user_input_logger(query)
-        bot_id = context.chat_data.edit_bot_id
+        bot_id = context.ensured_chat_data.edit_bot_id
         logger.info("Restarting bot `%s`...", bot_id)
         action = EditFlowAction.RESTART
         self._set_screen(action, context)

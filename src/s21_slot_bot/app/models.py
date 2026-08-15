@@ -1,9 +1,9 @@
 import enum
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Any
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, InstanceOf, PositiveInt, TypeAdapter
-from telegram.ext import Application, CallbackContext, ExtBot, JobQueue
+from pydantic import AwareDatetime, BaseModel, Field, PositiveInt, TypeAdapter
+from telegram.ext import Application, ApplicationBuilder, CallbackContext, ExtBot, JobQueue
 
 from s21_slot_bot.app.consts import (
     MAX_INTERVAL_SEC,
@@ -11,17 +11,20 @@ from s21_slot_bot.app.consts import (
     MIN_INTERVAL_SEC,
     MIN_NUM_BOTS,
 )
+from s21_slot_bot.app.errors import AppNotInitializedError
 from s21_slot_bot.client.models import ProjectExtended, RequiredReviews
-from s21_slot_bot.client.s21_client import School21Client
 from s21_slot_bot.common.logger import LogEntity, LoggerAdapterID, get_id_logger
 
 type IntervalSec = Annotated[PositiveInt, Field(ge=MIN_INTERVAL_SEC, le=MAX_INTERVAL_SEC)]
 type NumBots = Annotated[PositiveInt, Field(ge=MIN_NUM_BOTS, le=MAX_NUM_BOTS)]
 
-type App = Application[ExtBot, CustomContext, dict, ChatData, BotData, JobQueue[CustomContext]]
+type Bot = ExtBot[None]
+type UserData = dict[Any, Any]
+type App = Application[Bot, CustomContext, UserData, ChatData, BotData, JobQueue[CustomContext]]
+type AppBuilder = ApplicationBuilder[Bot, CustomContext, UserData, ChatData, BotData, JobQueue[CustomContext]]
 
-RequiredReviewsAdapter = TypeAdapter(RequiredReviews)
-IntervalSecAdapter = TypeAdapter(IntervalSec)
+RequiredReviewsAdapter: TypeAdapter[RequiredReviews] = TypeAdapter(RequiredReviews)
+IntervalSecAdapter: TypeAdapter[IntervalSec] = TypeAdapter(IntervalSec)
 
 
 class MenuButton(StrEnum):
@@ -130,7 +133,7 @@ class BotData(BaseModel):
     chat_should_move_menu: dict[int, bool] = Field(default_factory=dict)
 
 
-class CustomContext(CallbackContext[ExtBot, dict, ChatData, BotData]):
+class CustomContext(CallbackContext[Bot, UserData, ChatData, BotData]):
     """Wrapper around CallbackContext to pass a custom chat data model as a type parameter."""
 
     def __init__(
@@ -140,3 +143,15 @@ class CustomContext(CallbackContext[ExtBot, dict, ChatData, BotData]):
         user_id: int | None = None,
     ):
         super().__init__(application=application, chat_id=chat_id, user_id=user_id)
+
+    @property
+    def ensured_chat_data(self) -> ChatData:
+        if not self.chat_data:
+            raise AppNotInitializedError("данные чата не инициализированы")
+        return self.chat_data
+
+    @property
+    def ensured_job_queue(self) -> JobQueue[CustomContext]:
+        if self.job_queue is None:
+            raise AppNotInitializedError("очередь задач не инициализирована")
+        return self.job_queue  # type: ignore [return-value]

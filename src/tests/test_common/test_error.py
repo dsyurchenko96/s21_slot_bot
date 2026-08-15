@@ -7,7 +7,7 @@ from s21_slot_bot.client.errors import School21Error
 
 
 class TestError:
-    def test_error_effective_status_inherited_implicit_context(self):
+    def test_error_effective_status_inherited_implicit_context(self) -> None:
         with pytest.raises(BotRuntimeError) as exc_info:
             try:
                 err = School21Error("not found", status=HTTPStatus.NOT_FOUND)
@@ -17,7 +17,7 @@ class TestError:
         error = exc_info.value
         assert error.effective_status == HTTPStatus.NOT_FOUND
 
-    def test_error_effective_status_overridden_explicit_cause(self):
+    def test_error_effective_status_overridden_explicit_cause(self) -> None:
         with pytest.raises(BotRuntimeError) as exc_info:
             try:
                 err = School21Error("not found", status=HTTPStatus.NOT_FOUND)

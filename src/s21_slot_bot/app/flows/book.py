@@ -38,7 +38,8 @@ class BookFlow(Flow):
                     )
                     if not are_p2p_points_left:
                         self._bot_manager.stop_bot(cfg.bot_id, context, logger)
-                    await self._messenger.safe_delete(query.message.message_id, logger)
+                    if query.message:
+                        await self._messenger.safe_delete(query.message.message_id, logger)
                 except School21Error as e:
                     raise BotRuntimeError(f"бот #{bot_id} ({cfg.project_name}): не удалось записаться") from e
             case _:

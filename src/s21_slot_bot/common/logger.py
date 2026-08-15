@@ -1,13 +1,14 @@
 import enum
 import logging
 import re
+from collections.abc import MutableMapping
 from enum import IntEnum, StrEnum
 from logging import Logger, LoggerAdapter, LogRecord
-from typing import Any, MutableMapping, override
+from typing import Any, override
 
 from telegram import CallbackQuery, Update
 
-from s21_slot_bot.common.random import random_id
+from s21_slot_bot.common.id import random_id
 
 
 class LogLevel(IntEnum):
@@ -18,7 +19,7 @@ class LogLevel(IntEnum):
     CRITICAL = logging.CRITICAL
 
     @classmethod
-    def from_str(cls, value: str) -> "LogLevel":
+    def from_str(cls, value: str) -> LogLevel:
         return getattr(cls, value.upper(), cls.INFO)
 
 
@@ -45,12 +46,14 @@ class LoggerSensitiveFilter(logging.Filter):
         return record
 
 
-class LoggerAdapterID(LoggerAdapter):
+class LoggerAdapterID(LoggerAdapter[Logger]):
     def process(self, msg: Any, kwargs: MutableMapping[str, Any]) -> tuple[Any, MutableMapping[str, Any]]:
-        return "[%s #%s] %s" % (self.extra["entity"], self.extra["id"], msg), kwargs
+        message = "[%s #%s] %s" % (self.extra["entity"], self.extra["id"], msg) if self.extra else "%s" % msg  # noqa: UP031
+        return message, kwargs
 
 
 def get_user_input_logger(user_input: Update | CallbackQuery | object) -> LoggerAdapterID:
+    input_id: str | int
     if isinstance(user_input, CallbackQuery):
         input_id = user_input.id
     elif isinstance(user_input, Update):

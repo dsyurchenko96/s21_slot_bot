@@ -1,32 +1,27 @@
-import asyncio
-import logging
-import random
-from asyncio import Task
-from datetime import datetime, timedelta
-from typing import Any
-
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from datetime import datetime
 
 from s21_slot_bot.app.booking_manager import BookingManager
 from s21_slot_bot.app.config import BotConfig
-from s21_slot_bot.app.errors import BotNotFoundError, BotRuntimeError, TooManyBotsError
+from s21_slot_bot.app.errors import (
+    BotNotFoundError,
+    BotRuntimeError,
+    InternalError,
+    TooManyBotsError,
+)
 from s21_slot_bot.app.messenger import Messenger
 from s21_slot_bot.app.models import (
     BotInstance,
     CustomContext,
-    FlowCategory,
     IntervalSec,
     JobData,
     Lifecycle,
     Mode,
     NumBots,
 )
-from s21_slot_bot.client.config import S21ClientConfig
-from s21_slot_bot.client.errors import School21Error, School21NoPointsError
-from s21_slot_bot.client.models import Booking, DryBooking, TimeSlot
+from s21_slot_bot.app.utils import get_tzinfo
+from s21_slot_bot.client.models import TimeSlot
 from s21_slot_bot.client.s21_client import School21Client
 from s21_slot_bot.common.logger import LoggerLike
-from s21_slot_bot.common.random import hash_id
 
 
 class BotManager:
@@ -58,7 +53,7 @@ class BotManager:
             raise TooManyBotsError(f"Максимальное количество ботов превышено ({self._bot_config.max_bots})")
 
     def get_bot(self, bot_id: str | None) -> BotInstance:
-        bot = self._bots.get(bot_id)
+        bot = self._bots.get(bot_id) if bot_id else None
         if not bot:
             raise BotNotFoundError(f"бот #{bot_id} не найден")
         return bot
@@ -78,7 +73,7 @@ class BotManager:
             logger.warning("Unable to find bot `%s`", bot_id)
             return False
         inst.state = Lifecycle.STOPPED
-        jobs = context.job_queue.get_jobs_by_name(bot_id)
+        jobs = context.ensured_job_queue.get_jobs_by_name(bot_id)
         if not jobs:
             logger.error("Unable to find job for bot `%s`", bot_id)
             return False
@@ -122,26 +117,29 @@ class BotManager:
         inst.state = Lifecycle.RUNNING
         self._bots[cfg.bot_id] = inst
         job_data = JobData(inst=inst, task_id=task_id, answer_id=answer_id)
-        job = context.application.job_queue.run_repeating(
+        job = context.ensured_job_queue.run_repeating(
             self._search, cfg.interval_sec, data=job_data, chat_id=self._chat_id, name=cfg.bot_id
         )
         logger.info("Started bot #%s", cfg.bot_id)
         self._booking_manager.start_refreshing(logger)
-        await job.run(context.application)
+        await job.run(context.application)  # type: ignore [arg-type]
 
     async def _search(self, context: CustomContext) -> None:
         job = context.job
+        if not job:
+            raise InternalError("задача на поиск не найдена")
         job_data = JobData.model_validate(job.data)
         inst, answer_id, task_id = job_data.inst, job_data.answer_id, job_data.task_id
         logger = inst.logger()
         cfg = inst.cfg
+        tz = get_tzinfo(context)
 
         if inst.state != Lifecycle.RUNNING:
             logger.warning("Bot `%s` is not currently running, stopping job `%s`", cfg.bot_id, job.name)
             self.stop_bot(cfg.bot_id, context, logger)
             return
 
-        if datetime.now(tz=context.bot.defaults.tzinfo) >= cfg.to_dt:
+        if datetime.now(tz=tz) >= cfg.to_dt:
             logger.info("Removing the current bot search due to expiration")
             self.delete_bot(cfg.bot_id, context, logger)
             await self._messenger.send(
@@ -151,7 +149,7 @@ class BotManager:
             return
 
         inst.stats.attempts_total += 1
-        inst.stats.last_ping = datetime.now(tz=context.bot.defaults.tzinfo)
+        inst.stats.last_ping = datetime.now(tz=tz)
 
         try:
             slots_info = await self._s21_client.get_slots_info(task_id, cfg.from_dt, cfg.to_dt, logger)

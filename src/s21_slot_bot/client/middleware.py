@@ -1,50 +1,30 @@
 import asyncio
 import html
-import json
 import re
 import time
 import uuid
-from datetime import datetime, timedelta, tzinfo
 from http import HTTPStatus
-from typing import Any, NoReturn, Self
+from typing import Any
 from urllib.parse import parse_qs, quote, urljoin, urlparse
 
 import aiohttp
 from aiohttp import ClientHandlerType, ClientRequest, ClientResponse
-from yarl import URL
 
 from s21_slot_bot.client.config import S21ClientConfig
 from s21_slot_bot.client.consts import (
     AUTH_URL,
     CLIENT_ID,
     DEFAULT_TOKEN_EXPIRATION_SEC,
-    GRAPHQL_URL,
     PLATFORM_URL,
-    USER_ROLE,
-    X_EDU_ORG_UNIT_ID,
-    X_EDU_PRODUCT_ID,
 )
 from s21_slot_bot.client.errors import (
-    School21Error,
-    School21ErrorType,
     School21LoginError,
-    School21NoPointsError,
-    School21ParsingError,
-    School21SlotNotFoundError,
 )
 from s21_slot_bot.client.models import (
-    Booking,
     ContentType,
     GrantType,
-    Project,
-    ProjectExtended,
-    ProjectStatus,
-    ReviewInfo,
-    SlotsInfo,
     Tokens,
 )
-from s21_slot_bot.common.logger import LoggerLike
-from s21_slot_bot.common.time import dt_to_isoz
 
 
 class School21AuthMiddleware:
@@ -100,9 +80,7 @@ class School21AuthMiddleware:
 
     async def _ensure_authenticated(self, session: aiohttp.ClientSession) -> None:
         async with self._auth_lock:
-            if self._tokens_valid:
-                return
-            if self._tokens and self._tokens.refresh_token and await self._try_refresh(session):
+            if self._tokens_valid or await self._try_refresh(session):
                 return
             await self._login(session)
 
@@ -150,13 +128,16 @@ class School21AuthMiddleware:
                 raise School21LoginError(
                     f"ошибка при запросе токена: `{token_resp.reason}`",
                     status=HTTPStatus(token_resp.status),
-                    location=body or None,
+                    location={"body": body},
                 )
             payload = await token_resp.json()
 
         self._set_tokens(payload)
 
     async def _try_refresh(self, session: aiohttp.ClientSession) -> bool:
+        if not self._tokens or not self._tokens.refresh_token:
+            return False
+
         async with session.post(
             self._token_endpoint,
             data={
@@ -212,7 +193,7 @@ class School21AuthMiddleware:
                 continue
 
             query = parse_qs(parsed.fragment)
-            code = (query.get("code") or [None])[0]
+            code = (query.get("code") or [""])[0]
             if code:
                 return code
 

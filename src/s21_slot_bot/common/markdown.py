@@ -11,7 +11,7 @@ class MarkdownV2Escaper:
     It ensures that only characters outside MarkdownV2 syntax are escaped.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         # Define special characters that need to be escaped in MarkdownV2
         self.special_chars = r"_*\[\]()~`>#+-=|{}.!"
 

@@ -1,21 +1,23 @@
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import Job
 
 from s21_slot_bot.app.consts import CURRENT_BOOKINGS_SEARCH_WINDOW, UPCOMING_REVIEW_REMINDER_WINDOW
+from s21_slot_bot.app.errors import AppNotInitializedError
 from s21_slot_bot.app.flows.actions import BookFlowAction
 from s21_slot_bot.app.messenger import Messenger
-from s21_slot_bot.app.models import App, BotInstance, CustomContext, FlowCategory, IntervalSec, SearchConfig
-from s21_slot_bot.client.errors import School21Error, School21NoPointsError, School21SlotNotFoundError
+from s21_slot_bot.app.models import App, BotInstance, CustomContext, FlowCategory, IntervalSec
+from s21_slot_bot.app.utils import get_tzinfo
+from s21_slot_bot.client.errors import School21NoPointsError, School21SlotNotFoundError
 from s21_slot_bot.client.models import Booking, DryBooking
 from s21_slot_bot.client.s21_client import School21Client
+from s21_slot_bot.common.id import hash_id
 from s21_slot_bot.common.logger import LogEntity, LoggerLike, get_id_logger
-from s21_slot_bot.common.random import hash_id
 from s21_slot_bot.common.strings import backtick_wrap
-from s21_slot_bot.common.time import dt_to_markdown, dt_to_pretty, dt_to_pretty_time, safe_isoz_to_dt
+from s21_slot_bot.common.time import dt_to_markdown, dt_to_pretty, safe_isoz_to_dt
 
 
 class BookingManager:
@@ -51,6 +53,8 @@ class BookingManager:
         return self._job is not None
 
     def start_refreshing(self, logger: LoggerLike) -> None:
+        if not self._app.job_queue:
+            raise AppNotInitializedError("очередь задач не инициализирована")
         if self._job is not None:
             logger.info("Booking refresher is already running")
             return
@@ -101,7 +105,7 @@ class BookingManager:
         await self._messenger.send(
             context,
             f"🔔 бот #{cfg.bot_id} ({backtick_wrap(cfg.project_name)}) остановлен: найден слот\n"
-            f"начало: {dt_to_markdown(start_time, tz=context.bot.defaults.tzinfo)}",
+            f"начало: {dt_to_markdown(start_time, tz=get_tzinfo(context))}",
             kb=kb,
             parse_mode=ParseMode.MARKDOWN_V2,
         )
@@ -117,6 +121,7 @@ class BookingManager:
     ) -> bool:
         are_p2p_points_left = True
         cfg = inst.cfg
+        tz = get_tzinfo(context)
         try:
             booking_id = await self._s21_client.book(
                 answer_id=answer_id,
@@ -139,7 +144,7 @@ class BookingManager:
             await self._messenger.send(
                 context,
                 f"✅ бот #{cfg.bot_id} ({backtick_wrap(cfg.project_name)}): записан\n"
-                f"начало: {dt_to_markdown(start_time, tz=context.bot.defaults.tzinfo)}\n"
+                f"начало: {dt_to_markdown(start_time, tz=tz)}\n"
                 f"проверок: {inst.stats.currently_booked}/{cfg.required_reviews}",
                 parse_mode=ParseMode.MARKDOWN_V2,
             )
@@ -153,15 +158,14 @@ class BookingManager:
         except School21SlotNotFoundError as e:
             logger.info("Slot is no longer available")
             inst.stats.attempts_failed += 1
+            isoz = e.location.get("input", {}).get("startTime") if e.location else None
             cancelled_time = safe_isoz_to_dt(
-                isoz=e.location.get("input", {}).get("startTime"),
+                isoz=isoz,
                 tz=UTC,
                 logger=logger,
             )
             cancelled_slot_message = (
-                f"слот на {dt_to_pretty(cancelled_time, tz=context.bot.defaults.tzinfo)} недоступен"
-                if cancelled_time
-                else "слот недоступен"
+                f"слот на {dt_to_pretty(cancelled_time, tz=tz)} недоступен" if cancelled_time else "слот недоступен"
             )
             await self._messenger.send(
                 context,
@@ -176,14 +180,14 @@ class BookingManager:
     async def _refresh_bookings(self, context: CustomContext) -> None:
         logger = get_id_logger(LogEntity.BOOKING_REFRESHER)
         logger.info("Refreshing bookings")
-        now = datetime.now(tz=context.bot.defaults.tzinfo)
+        now = datetime.now(tz=get_tzinfo(context))
         search_to = now + CURRENT_BOOKINGS_SEARCH_WINDOW
         try:
             fresh_bookings = await self._s21_client.get_bookings(now, search_to, logger)
             async with self._booking_lock:
                 stale_bookings = self._bookings.copy()
                 self._bookings = fresh_bookings
-            context.chat_data.last_booking_refresh_time = now
+            context.ensured_chat_data.last_booking_refresh_time = now
             cancelled_bookings = self._get_cancelled_bookings(fresh_bookings, stale_bookings, now, logger)
             await self._notify_on_cancelled_reviews(cancelled_bookings, context, logger)
             for booking_id, booking in fresh_bookings.items():
@@ -225,7 +229,7 @@ class BookingManager:
         logger.info("Sending a notification about an upcoming review of %s at %s", booking.project_name, booking.start)
         link_text = f"\nссылка для подключения: {booking.url}" if booking.url else ""
         text = (
-            f"🔔 проверка проекта {backtick_wrap(booking.project_name)} начинается в {dt_to_markdown(booking.start, tz=context.bot.defaults.tzinfo)}!"
+            f"🔔 проверка проекта {backtick_wrap(booking.project_name)} начинается в {dt_to_markdown(booking.start, tz=get_tzinfo(context))}!"
             + link_text
         )
         await self._messenger.send(context, text, parse_mode=ParseMode.MARKDOWN_V2)
@@ -241,8 +245,7 @@ class BookingManager:
             return
 
         project_to_time = {
-            booking.project_name: dt_to_pretty(booking.start, tz=context.bot.defaults.tzinfo)
-            for booking in cancelled_bookings
+            booking.project_name: dt_to_pretty(booking.start, tz=get_tzinfo(context)) for booking in cancelled_bookings
         }
         logger.info("Notifying on cancelled reviews: %s", project_to_time)
         warning = ["⚠️ проверка отменена!" if len(project_to_time) == 1 else "⚠️ проверки отменены!"]

@@ -1,8 +1,8 @@
+# ruff: noqa: BLE001
 import asyncio
 import json
-from collections.abc import Awaitable
 from datetime import datetime
-from functools import cache, lru_cache
+from functools import cache
 from http import HTTPStatus
 from importlib.resources import files
 from typing import Any, NoReturn
@@ -55,7 +55,7 @@ class School21Client:
     def _session(self) -> aiohttp.ClientSession:
         if not self._is_session_open:
             raise RuntimeError("School21Client не инициализирован")
-        return self._session_internal
+        return self._session_internal  # type: ignore [return-value]
 
     @property
     def _is_session_open(self) -> bool:
@@ -70,8 +70,8 @@ class School21Client:
         )
 
     async def stop(self) -> None:
-        if not self._is_session_open:
-            await self._session_internal.close()
+        if self._is_session_open:
+            await self._session_internal.close()  # type: ignore [union-attr]
 
     async def get_user_and_student_id(self, logger: LoggerLike) -> tuple[str, str]:
         if self._user_id and self._student_id:
@@ -121,7 +121,7 @@ class School21Client:
         operation_name = OperationName.GET_LOCAL_COURSE_GOALS
         data = await self._graphql(operation_name, {"localCourseId": course_id}, logger)
         try:
-            course_goals: list[dict] = data["course"][operation_name]["localCourseGoals"]
+            course_goals: list[dict[str, Any]] = data["course"][operation_name]["localCourseGoals"]
             course_projects = [Project.model_validate(goal) for goal in course_goals]
             logger.info(
                 "Local course projects for course_id `%s`: %s",
@@ -199,7 +199,7 @@ class School21Client:
             logger,
         )
         try:
-            booking_id = data["student"]["addBookingP2PToEventSlot"]["id"]
+            booking_id: str = data["student"]["addBookingP2PToEventSlot"]["id"]
             logger.info("Successfully booked a review, id `%s`", booking_id)
             return booking_id
         except Exception as e:
@@ -245,19 +245,20 @@ class School21Client:
                         "response": text,
                     },
                 )
-            data = await resp.json()
+            resp_body: dict[str, Any] = await resp.json()
             logger.debug(
                 "Received response from operation `%s`: %s",
                 operation_name,
-                json.dumps(data, indent=2, ensure_ascii=False),
+                json.dumps(resp_body, indent=2, ensure_ascii=False),
             )
-            if errors := data.get("errors"):
+            if errors := resp_body.get("errors"):
                 self._raise_error_from_response(
                     operation_name,
                     variables,
                     errors,
                 )
-            return data.get("data", {})
+            data: dict[str, Any] = resp_body.get("data", {})
+            return data
 
     def _raise_error_from_response(
         self, operation_name: str, variables: dict[str, Any], errors: list[dict[str, Any]]

@@ -1,8 +1,8 @@
 import asyncio
+from collections.abc import Callable, Coroutine
 from datetime import datetime
-from typing import Any, Callable, Coroutine, cast, override
+from typing import Any, cast, override
 
-from pydantic import TypeAdapter
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 
@@ -13,15 +13,16 @@ from s21_slot_bot.app.models import (
     BotInstance,
     CustomContext,
     Mode,
-    RequiredReviews,
+    RequiredReviewsAdapter,
     Screen,
     SearchConfig,
 )
+from s21_slot_bot.app.utils import get_message_text, get_tzinfo
 from s21_slot_bot.client.consts import MIN_REQUIRED_REVIEWS
 from s21_slot_bot.client.errors import School21Error
 from s21_slot_bot.client.models import ProjectExtended
+from s21_slot_bot.common.id import random_id
 from s21_slot_bot.common.logger import get_user_input_logger
-from s21_slot_bot.common.random import random_id
 from s21_slot_bot.common.strings import backtick_wrap, ensure_str
 from s21_slot_bot.common.time import dt_to_pretty, parse_to_datetime
 
@@ -51,11 +52,19 @@ class StartFlow(CustomInputFlow):
         return list(self._action_to_method.keys())
 
     @override
+    def _get_project(self, context: CustomContext) -> ProjectExtended:
+        start_project_id = context.ensured_chat_data.start_project_id
+        if not start_project_id:
+            raise InternalError("проект не выбран")
+        project = context.ensured_chat_data.projects_map[start_project_id]
+        return project
+
+    @override
     def _get_prev_action(self, action: FlowAction, context: CustomContext) -> FlowAction | None:
         match action:
-            case InputFlowAction.PICK_MODE if len(context.chat_data.projects_map) == 1:
+            case InputFlowAction.PICK_MODE if len(context.ensured_chat_data.projects_map) == 1:
                 return None
-            case InputFlowAction.PICK_FROM if context.chat_data.start_mode == Mode.ONLY_FIND:
+            case InputFlowAction.PICK_FROM if context.ensured_chat_data.start_mode == Mode.ONLY_FIND:
                 return InputFlowAction.PICK_MODE
             case _:
                 cur_idx = self._get_action_idx(action)
@@ -69,38 +78,39 @@ class StartFlow(CustomInputFlow):
     @override
     async def parse_callback(self, callback_data: list[str], query: CallbackQuery, context: CustomContext) -> None:
         logger = get_user_input_logger(query)
+        tz = get_tzinfo(context)
         action = callback_data.pop()
         match action:
-            # case StartFlowAction.LIST_PROJECTS:
-            #     await self.list_projects(query, context)
             case StartFlowAction.PICK_PROJECT:
                 proj_id = callback_data.pop()
-                context.chat_data.start_project_id = proj_id
+                context.ensured_chat_data.start_project_id = proj_id
                 await self.pick_mode(query, context)
             case InputFlowAction.PICK_MODE:
                 mode = Mode(callback_data.pop())
-                context.chat_data.start_mode = mode
+                context.ensured_chat_data.start_mode = mode
                 match mode:
                     case Mode.ONLY_FIND:
-                        context.chat_data.start_required_reviews = MIN_REQUIRED_REVIEWS
+                        context.ensured_chat_data.start_required_reviews = MIN_REQUIRED_REVIEWS
                         await self.pick_from(query, context)
                     case Mode.FIND_AND_BOOK:
                         await self.pick_num_reviews(query, context)
             case InputFlowAction.PICK_NUM_REVIEWS:
-                num_reviews = TypeAdapter(RequiredReviews).validate_strings(callback_data.pop())
-                context.chat_data.start_required_reviews = num_reviews
+                num_reviews = RequiredReviewsAdapter.validate_strings(callback_data.pop())
+                context.ensured_chat_data.start_required_reviews = num_reviews
                 await self.pick_from(query, context)
             case InputFlowAction.PICK_FROM:
-                now = datetime.now(tz=context.bot.defaults.tzinfo)
-                from_choice = parse_to_datetime(callback_data.pop(), context.bot.defaults.tzinfo, now, logger)
-                context.chat_data.start_from = from_choice
+                now = datetime.now(tz=tz)
+                from_choice = parse_to_datetime(callback_data.pop(), tz, now, logger)
+                context.ensured_chat_data.start_from = from_choice
                 await self.pick_to(query, context)
             case InputFlowAction.PICK_TO:
-                from_dt = context.chat_data.start_from
+                from_dt = context.ensured_chat_data.start_from
                 if not from_dt:
-                    raise InternalError("начальное время поиска не задано", location=context.chat_data.model_dump())
-                to_choice = parse_to_datetime(callback_data.pop(), context.bot.defaults.tzinfo, from_dt, logger)
-                context.chat_data.start_to = to_choice
+                    raise InternalError(
+                        "начальное время поиска не задано", location=context.ensured_chat_data.model_dump()
+                    )
+                to_choice = parse_to_datetime(callback_data.pop(), tz, from_dt, logger)
+                context.ensured_chat_data.start_to = to_choice
                 await self.confirm(query, context)
             case StartFlowAction.CONFIRM:
                 await self.finalize(query, context)
@@ -118,13 +128,7 @@ class StartFlow(CustomInputFlow):
     async def list_projects(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
         logger = get_user_input_logger(user_input)
         logger.info("Listing projects...")
-        # if self._bot_manager.running_count() >= self._bot_manager.bot_config.max_bots:
-        #     text = f"Максимальное количество ботов превышено ({self._bot_manager.bot_config.max_bots}) - останови/удали имеющихся или поменяй количество"
-        #     await self._messenger.render_menu(context, text)
-        #     return
         self._bot_manager.check_bot_limits()
-
-        # self._screen_set(context, Screen.START_PICK_PROJECT)
         action = StartFlowAction.PICK_PROJECT
         self._set_screen(action, context)
         try:
@@ -135,22 +139,26 @@ class StartFlow(CustomInputFlow):
                 return
             projects_extended: list[ProjectExtended] = []
             review_info_per_project = await asyncio.gather(
-                *[self._s21_client.get_review_info(project.id, student_id, logger) for project in projects]
+                *[
+                    self._s21_client.get_review_info(project.id, student_id, logger)
+                    for project in projects
+                    if project.id
+                ]
             )
+            if len(review_info_per_project) != len(projects):
+                raise InternalError("не удалось получить информацию о проверках для проектов")
             for project, review_info in zip(projects, review_info_per_project):
                 projects_extended.append(
                     ProjectExtended.model_validate({**project.model_dump(), "review_info": review_info})
                 )
         except School21Error as e:
             raise MenuError(f"не удалось получить проекты: {e.message}") from e
-            # await render_menu(user_input, context, text)
-            # return
 
-        context.chat_data.projects_map = {project.id: project for project in projects_extended}
+        context.ensured_chat_data.projects_map = {project.id: project for project in projects_extended}
 
         if len(projects_extended) == 1:
             project = projects_extended[0]
-            context.chat_data.start_project_id = project.id
+            context.ensured_chat_data.start_project_id = project.id
             await self.pick_mode(user_input, context)
             return
 
@@ -170,40 +178,33 @@ class StartFlow(CustomInputFlow):
     async def custom_from(self, update: Update, context: CustomContext) -> None:
         logger = get_user_input_logger(update)
         logger.info("Parsing custom search start time...")
-        # try:
-        now = datetime.now(tz=context.bot.defaults.tzinfo)
-        start_from = parse_to_datetime(update.message.text, context.bot.defaults.tzinfo, now, logger)
-        context.chat_data.start_from = start_from
-        # except InvalidUserInputError as e:
-        #     await self.pick_from(update, context)
-        #     raise e
-
+        tz = get_tzinfo(context)
+        now = datetime.now(tz=tz)
+        text = get_message_text(update)
+        start_from = parse_to_datetime(text, tz, now, logger)
+        context.ensured_chat_data.start_from = start_from
         await self.pick_to(update, context)
 
     async def custom_to(self, update: Update, context: CustomContext) -> None:
         logger = get_user_input_logger(update)
         logger.info("Parsing custom search end time...")
-        # try:
-        start_from = context.chat_data.start_from
+        start_from = context.ensured_chat_data.start_from
+        tz = get_tzinfo(context)
         if not start_from:
-            raise InternalError("начальное время поиска не задано", location=context.chat_data.model_dump())
-        start_to = parse_to_datetime(update.message.text, context.bot.defaults.tzinfo, start_from, logger)
+            raise InternalError("начальное время поиска не задано", location=context.ensured_chat_data.model_dump())
+        text = get_message_text(update)
+        start_to = parse_to_datetime(text, tz, start_from, logger)
         if start_to <= start_from:
             raise InvalidUserInputError(
-                f"конечное время должно быть позже начального ({dt_to_pretty(start_to, tz=context.bot.defaults.tzinfo)})"
+                f"конечное время должно быть позже начального ({dt_to_pretty(start_to, tz=tz)})"
             )
-        context.chat_data.start_to = start_to
-        # except InvalidUserInputError as e:
-        #     await self.pick_to(update, context)
-        #     raise e
-
+        context.ensured_chat_data.start_to = start_to
         await self.confirm(update, context)
 
     async def confirm(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
         logger = get_user_input_logger(user_input)
         logger.info("Confirming the chosen bot search parameters...")
         action = StartFlowAction.CONFIRM
-        # self._screen_set(context, Screen.START_CONFIRM)
         self._set_screen(action, context)
 
         kb = InlineKeyboardMarkup(
@@ -224,25 +225,25 @@ class StartFlow(CustomInputFlow):
         )
         await self._messenger.render_menu_message(context, text, logger, kb=kb, parse_mode=ParseMode.MARKDOWN_V2)
 
-    async def finalize(self, query: CallbackQuery, context: CustomContext) -> None:
-        logger = get_user_input_logger(query)
+    async def finalize(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
+        logger = get_user_input_logger(user_input)
         logger.info("Finalizing the chosen bot search parameters...")
         action = StartFlowAction.CONFIRM
         self._set_screen(action, context)
         text = self._get_chosen_project_info_text(context, action, is_markdown=True)
         self._bot_manager.check_bot_limits()
-        project_name = context.chat_data.projects_map[context.chat_data.start_project_id].name
+        project = self._get_project(context)
 
         bot_id = random_id()
         cfg = SearchConfig(
             bot_id=bot_id,
-            project_id=context.chat_data.start_project_id,
-            project_name=project_name,
-            required_reviews=context.chat_data.start_required_reviews,
-            from_dt=context.chat_data.start_from,
-            to_dt=context.chat_data.start_to,
+            project_id=project.id,
+            project_name=project.name,
+            required_reviews=context.ensured_chat_data.start_required_reviews,
+            from_dt=context.ensured_chat_data.start_from,
+            to_dt=context.ensured_chat_data.start_to,
             interval_sec=self._bot_manager.poll_interval_sec,
-            mode=context.chat_data.start_mode,
+            mode=context.ensured_chat_data.start_mode,
         )
 
         inst = BotInstance(cfg=cfg)
@@ -254,15 +255,16 @@ class StartFlow(CustomInputFlow):
     def _get_chosen_project_info_text(
         self, context: CustomContext, action: FlowAction | None = None, is_markdown: bool = False
     ) -> str:
-        project = context.chat_data.projects_map.get(context.chat_data.start_project_id)
+        project = self._get_project(context)
         project_name = ensure_str(project, getter=lambda proj: backtick_wrap(proj.name) if is_markdown else proj.name)
         currently_booked = ensure_str(project, getter=lambda proj: proj.review_info.booked)
+        tz = get_tzinfo(context)
         lines = [
-            f"проект: {project_name} (ID {ensure_str(context.chat_data.start_project_id)})",
-            f"режим: {ensure_str(context.chat_data.start_mode, getter=lambda mode: mode.to_text())}",
-            f"количество проверок: {currently_booked}/{ensure_str(context.chat_data.start_required_reviews)}",
-            f"начало поиска: {ensure_str(context.chat_data.start_from, getter=dt_to_pretty, tz=context.bot.defaults.tzinfo)}",
-            f"конец поиска: {ensure_str(context.chat_data.start_to, getter=dt_to_pretty, tz=context.bot.defaults.tzinfo)}",
+            f"проект: {project_name} (ID {ensure_str(context.ensured_chat_data.start_project_id)})",
+            f"режим: {ensure_str(context.ensured_chat_data.start_mode, getter=lambda mode: mode.to_text())}",
+            f"количество проверок: {currently_booked}/{ensure_str(context.ensured_chat_data.start_required_reviews)}",
+            f"начало поиска: {ensure_str(context.ensured_chat_data.start_from, getter=dt_to_pretty, tz=tz)}",
+            f"конец поиска: {ensure_str(context.ensured_chat_data.start_to, getter=dt_to_pretty, tz=tz)}",
         ]
         line_idx = self._get_action_idx(action) if action else len(lines)
         project_info_text = "\n".join(lines[:line_idx]) + "\n\n"

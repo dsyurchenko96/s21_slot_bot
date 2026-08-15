@@ -1,23 +1,21 @@
-import asyncio
-import datetime
-import logging
-from contextlib import suppress
-
 import telegram
 from pydantic import ValidationError
-from telegram import MessageEntity, Update
-from telegram.constants import ParseMode
-from telegram.ext import Application
+from telegram import Message, Update
 
 from s21_slot_bot.app.bot_manager import BotManager
-from s21_slot_bot.app.errors import ForbiddenError, InvalidCallbackDataError, MenuError, is_not_modified_tg_error
+from s21_slot_bot.app.errors import (
+    ForbiddenError,
+    InternalError,
+    InvalidCallbackDataError,
+    MenuError,
+    is_not_modified_tg_error,
+)
 from s21_slot_bot.app.flows.collector import FlowCollector
-from s21_slot_bot.app.messenger import MAIN_MENU_KB, Messenger
-from s21_slot_bot.app.models import App, CustomContext, FlowCategory, MenuButton, Screen
-from s21_slot_bot.client.s21_client import School21Client
+from s21_slot_bot.app.messenger import Messenger
+from s21_slot_bot.app.models import CustomContext, FlowCategory, MenuButton, Screen
+from s21_slot_bot.app.utils import get_message_text
 from s21_slot_bot.common.error import Error
-from s21_slot_bot.common.logger import LogEntity, get_id_logger, get_user_input_logger
-from s21_slot_bot.common.time import dt_to_markdown
+from s21_slot_bot.common.logger import get_user_input_logger
 
 
 class InputHandler:
@@ -55,19 +53,20 @@ class InputHandler:
 
     async def on_text(self, update: Update, context: CustomContext) -> None:
         self._validate_access(update)
-        text = update.message.text
-        screen = context.chat_data.screen
+        text = get_message_text(update)
+        screen = context.ensured_chat_data.screen
         logger = get_user_input_logger(update)
         logger.info("Handling text `%s` with screen `%s`", text, screen)
 
-        await self._messenger.safe_delete(update.message.message_id, logger)
+        if update.message:
+            await self._messenger.safe_delete(update.message.message_id, logger)
         button_method = text in MenuButton and self._button_to_method.get(MenuButton(text))
         screen_method = self._screen_to_method.get(screen)
         method = button_method or screen_method
         if not method:
             raise MenuError("выбери действие в меню")
 
-        if not context.chat_data.menu_msg_id:
+        if not context.ensured_chat_data.menu_msg_id:
             await self._messenger.render_menu_message(context, "обработка запроса...", logger)
         await method(update, context)
         await self.on_success(update, context)
@@ -76,6 +75,8 @@ class InputHandler:
         self._validate_access(update)
         logger = get_user_input_logger(update)
         query = update.callback_query
+        if not query:
+            raise InternalError("не удалось обработать команду")
         await query.answer()
         data = query.data or ""
         logger.info("Processing callback `%s`", data)
@@ -106,16 +107,19 @@ class InputHandler:
                 await self._messenger.send(context, error.to_pretty())
             case _:
                 await self._messenger.send(context, f"❌ неизвестная ошибка: {error}")
-        if job := context.job:
+        if (job := context.job) and job.name:
             self._bot_manager.stop_bot(job.name, context, logger)
         logger.error("Exception while handling an update: %s", error, exc_info=error)
 
     async def on_success(self, update: Update, context: CustomContext) -> None:
         logger = get_user_input_logger(update)
-        await self._messenger.safe_delete(context.chat_data.menu_error_msg_id, logger)
-        context.chat_data.menu_error_msg_id = None
+        await self._messenger.safe_delete(context.ensured_chat_data.menu_error_msg_id, logger)
+        context.ensured_chat_data.menu_error_msg_id = None
 
     def _validate_access(self, update: Update) -> None:
-        message = update.message or update.callback_query.message
-        if message.chat_id != self._chat_id:
+        message = update.message or (update.callback_query and update.callback_query.message)
+        if not message:
+            raise InternalError("не удалось обработать сообщение")
+        chat_id = message.chat_id if isinstance(message, Message) else message.chat.id
+        if chat_id != self._chat_id:
             raise ForbiddenError("отсутствует доступ к боту")
