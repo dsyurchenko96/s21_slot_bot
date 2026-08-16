@@ -12,7 +12,7 @@ from s21_slot_bot.app.errors import (
 )
 from s21_slot_bot.app.flows.collector import FlowCollector
 from s21_slot_bot.app.messenger import Messenger
-from s21_slot_bot.app.models import CustomContext, FlowCategory, MenuButton, Screen
+from s21_slot_bot.app.models import CustomContext, FlowCategory, Lifecycle, MenuButton, Screen
 from s21_slot_bot.app.utils import get_message_text
 from s21_slot_bot.common.error import Error
 from s21_slot_bot.common.logger import get_user_input_logger
@@ -35,7 +35,7 @@ class InputHandler:
             MenuButton.STOP: self._flows.stop.stop_menu,
             MenuButton.DELETE: self._flows.delete.delete_menu,
             MenuButton.EDIT: self._flows.edit.list_bots,
-            MenuButton.STATUS: self._flows.status.status_show,
+            MenuButton.STATUS: self._flows.status.status_refresh,
         }
         self._screen_to_method = {
             Screen.START_PICK_FROM: self._flows.start.custom_from,
@@ -108,7 +108,7 @@ class InputHandler:
             case _:
                 await self._messenger.send(context, f"❌ неизвестная ошибка: {error}")
         if (job := context.job) and job.name:
-            self._bot_manager.stop_bot(job.name, context, logger)
+            self._bot_manager.stop_bot(job.name, context, logger, state=Lifecycle.FAILED)
         logger.error("Exception while handling an update: %s", error, exc_info=error)
 
     async def on_success(self, update: Update, context: CustomContext) -> None:
@@ -120,6 +120,7 @@ class InputHandler:
         message = update.message or (update.callback_query and update.callback_query.message)
         if not message:
             raise InternalError("не удалось обработать сообщение")
+        user_id = update.effective_user.id if update.effective_user else None
         chat_id = message.chat_id if isinstance(message, Message) else message.chat.id
-        if chat_id != self._chat_id:
+        if not (self._chat_id == chat_id == user_id):
             raise ForbiddenError("отсутствует доступ к боту")

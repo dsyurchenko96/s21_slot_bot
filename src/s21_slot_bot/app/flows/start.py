@@ -228,10 +228,10 @@ class StartFlow(CustomInputFlow):
     async def finalize(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
         logger = get_user_input_logger(user_input)
         logger.info("Finalizing the chosen bot search parameters...")
+        self._bot_manager.check_bot_limits()
         action = StartFlowAction.CONFIRM
         self._set_screen(action, context)
         text = self._get_chosen_project_info_text(context, action, is_markdown=True)
-        self._bot_manager.check_bot_limits()
         project = self._get_project(context)
 
         bot_id = random_id()
@@ -261,7 +261,7 @@ class StartFlow(CustomInputFlow):
         tz = get_tzinfo(context)
         lines = [
             f"проект: {project_name} (ID {ensure_str(context.ensured_chat_data.start_project_id)})",
-            f"режим: {ensure_str(context.ensured_chat_data.start_mode, getter=lambda mode: mode.to_text())}",
+            f"режим: {ensure_str(context.ensured_chat_data.start_mode, getter=lambda mode: ' '.join(mode.to_emoji_text()))}",
             f"количество проверок: {currently_booked}/{ensure_str(context.ensured_chat_data.start_required_reviews)}",
             f"начало поиска: {ensure_str(context.ensured_chat_data.start_from, getter=dt_to_pretty, tz=tz)}",
             f"конец поиска: {ensure_str(context.ensured_chat_data.start_to, getter=dt_to_pretty, tz=tz)}",

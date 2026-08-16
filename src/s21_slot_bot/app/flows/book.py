@@ -17,8 +17,11 @@ class BookFlow(Flow):
         action = callback_data.pop()
         match action:
             case BookFlowAction.BOOK_ATTEMPT_MANUAL:
+                if query.message:
+                    await self._messenger.safe_delete(query.message.message_id, logger)
                 dry_run_id, bot_id = callback_data
                 inst = self._bot_manager.get_bot(bot_id)
+                inst.stats.attempts_total += 1
                 cfg = inst.cfg
                 dry_booking = self._booking_manager.pop_dry(dry_run_id)
                 if not dry_booking:
@@ -38,8 +41,6 @@ class BookFlow(Flow):
                     )
                     if not are_p2p_points_left:
                         self._bot_manager.stop_bot(cfg.bot_id, context, logger)
-                    if query.message:
-                        await self._messenger.safe_delete(query.message.message_id, logger)
                 except School21Error as e:
                     raise BotRuntimeError(f"бот #{bot_id} ({cfg.project_name}): не удалось записаться") from e
             case _:

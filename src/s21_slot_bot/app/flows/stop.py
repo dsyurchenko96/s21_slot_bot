@@ -29,7 +29,7 @@ class StopFlow(Flow):
     async def stop_menu(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
         logger = get_user_input_logger(user_input)
         logger.info("Showing stop menu...")
-        running_bots = self._bot_manager.list_all(state=Lifecycle.RUNNING)
+        running_bots = self._bot_manager.list_all(states={Lifecycle.RUNNING})
         if not running_bots:
             await self._messenger.render_menu_message(context, "🚫 нет активных ботов", logger)
             return

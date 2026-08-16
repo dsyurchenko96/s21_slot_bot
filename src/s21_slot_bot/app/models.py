@@ -2,7 +2,7 @@ import enum
 from enum import StrEnum
 from typing import Annotated, Any
 
-from pydantic import AwareDatetime, BaseModel, Field, PositiveInt, TypeAdapter
+from pydantic import AwareDatetime, BaseModel, Field, NonNegativeInt, PositiveInt, TypeAdapter
 from telegram.ext import Application, ApplicationBuilder, CallbackContext, ExtBot, JobQueue
 
 from s21_slot_bot.app.consts import (
@@ -38,13 +38,16 @@ class MenuButton(StrEnum):
 class Lifecycle(StrEnum):
     RUNNING = enum.auto()
     STOPPED = enum.auto()
+    FAILED = enum.auto()
 
-    def to_text(self) -> str:
+    def to_emoji_text(self) -> tuple[str, str]:
         match self:
             case Lifecycle.RUNNING:
-                return "активен"
+                return "▶️", "активен"
             case Lifecycle.STOPPED:
-                return "остановлен"
+                return "⏸️", "остановлен"
+            case Lifecycle.FAILED:
+                return "❌", "ошибка"
 
 
 class FlowCategory(StrEnum):
@@ -60,12 +63,12 @@ class Mode(StrEnum):
     ONLY_FIND = enum.auto()
     FIND_AND_BOOK = enum.auto()
 
-    def to_text(self) -> str:
+    def to_emoji_text(self) -> tuple[str, str]:
         match self:
             case Mode.ONLY_FIND:
-                return "🔍 найти слот без записи"
+                return "🔍", "найти слот без записи"
             case Mode.FIND_AND_BOOK:
-                return "📝 найти слоты и записаться"
+                return "📝", "найти слоты и записаться"
 
 
 class Screen(StrEnum):
@@ -81,10 +84,10 @@ class Screen(StrEnum):
 
 class Stats(BaseModel):
     last_ping: AwareDatetime | None = None
-    attempts_total: PositiveInt = 0
-    attempts_success: PositiveInt = 0
-    attempts_failed: PositiveInt = 0
-    currently_booked: PositiveInt = 0
+    attempts_total: NonNegativeInt = 0
+    attempts_success: NonNegativeInt = 0
+    attempts_failed: NonNegativeInt = 0
+    currently_booked: NonNegativeInt = 0
 
 
 class SearchConfig(BaseModel):

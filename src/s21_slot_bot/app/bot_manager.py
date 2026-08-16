@@ -49,8 +49,8 @@ class BotManager:
         return self._bot_config.poll_interval_sec
 
     def check_bot_limits(self) -> None:
-        if len(self.list_all()) > self._bot_config.max_bots:
-            raise TooManyBotsError(f"Максимальное количество ботов превышено ({self._bot_config.max_bots})")
+        if len(self.list_all()) >= self._bot_config.max_bots:
+            raise TooManyBotsError(f"Максимальное количество ботов достигнуто ({self._bot_config.max_bots})")
 
     def get_bot(self, bot_id: str | None) -> BotInstance:
         bot = self._bots.get(bot_id) if bot_id else None
@@ -58,52 +58,15 @@ class BotManager:
             raise BotNotFoundError(f"бот #{bot_id} не найден")
         return bot
 
-    def list_all(self, state: Lifecycle | None = None) -> list[BotInstance]:
-        arr = [b for b in self._bots.values() if not state or b.state == state]
+    def list_all(self, states: set[Lifecycle] | None = None) -> list[BotInstance]:
+        all_bots = [b for b in self._bots.values() if not states or b.state in states]
 
         def key(x: BotInstance) -> tuple[int, str, str]:
-            pr = {Lifecycle.RUNNING: 0, Lifecycle.STOPPED: 1}.get(x.state, 9)
-            return pr, x.cfg.project_id, x.cfg.bot_id
+            prioritized_states = {Lifecycle.RUNNING: 0, Lifecycle.STOPPED: 1, Lifecycle.FAILED: 2}
+            priority = prioritized_states.get(x.state, len(Lifecycle) + 1)
+            return priority, x.cfg.project_id, x.cfg.bot_id
 
-        return sorted(arr, key=key)
-
-    def stop_bot(self, bot_id: str, context: CustomContext, logger: LoggerLike) -> bool:
-        inst = self._bots.get(bot_id)
-        if not inst:
-            logger.warning("Unable to find bot `%s`", bot_id)
-            return False
-        inst.state = Lifecycle.STOPPED
-        jobs = context.ensured_job_queue.get_jobs_by_name(bot_id)
-        if not jobs:
-            logger.error("Unable to find job for bot `%s`", bot_id)
-            return False
-        if len(jobs) > 1:
-            logger.warning("%d jobs found with ID `%s` - there may be a name collision", len(jobs), bot_id)
-        for job in jobs:
-            job.schedule_removal()
-            logger.info("Stopped job ID `%s`", job.name)
-        has_running_bots = bool(self.list_all(state=Lifecycle.RUNNING))
-        if not has_running_bots and not self._bot_config.should_refresh_bookings_always:
-            self._booking_manager.stop_refreshing(logger)
-        return True
-
-    def stop_all(self, context: CustomContext, logger: LoggerLike) -> None:
-        for inst in self.list_all(state=Lifecycle.RUNNING):
-            self.stop_bot(inst.cfg.bot_id, context, logger)
-
-    def delete_bot(self, bot_id: str, context: CustomContext, logger: LoggerLike) -> bool:
-        if not self.stop_bot(bot_id, context, logger):
-            return False
-        inst = self._bots.pop(bot_id, None)
-        is_deleted = bool(inst)
-        return is_deleted
-
-    def delete_all(self, context: CustomContext, logger: LoggerLike, state: Lifecycle | None = None) -> int:
-        deleted_counter = 0
-        for inst in self.list_all(state=state):
-            if self.delete_bot(inst.cfg.bot_id, context, logger):
-                deleted_counter += 1
-        return deleted_counter
+        return sorted(all_bots, key=key)
 
     async def start_bot(self, inst: BotInstance, context: CustomContext, logger: LoggerLike) -> None:
         cfg = inst.cfg
@@ -121,8 +84,52 @@ class BotManager:
             self._search, cfg.interval_sec, data=job_data, chat_id=self._chat_id, name=cfg.bot_id
         )
         logger.info("Started bot #%s", cfg.bot_id)
-        self._booking_manager.start_refreshing(logger)
+        await self._booking_manager.start_refreshing(logger)
         await job.run(context.application)  # type: ignore [arg-type]
+
+    def stop_bot(
+        self,
+        bot_id: str,
+        context: CustomContext,
+        logger: LoggerLike,
+        state: Lifecycle = Lifecycle.STOPPED,
+    ) -> bool:
+        inst = self._bots.get(bot_id)
+        if not inst:
+            logger.warning("Unable to find bot `%s`", bot_id)
+            return False
+        inst.state = state
+        has_running_bots = bool(self.list_all(states={Lifecycle.RUNNING}))
+        if not has_running_bots and self._bot_config.should_refresh_bookings_on_active_bots:
+            self._booking_manager.stop_refreshing(logger)
+        jobs = context.ensured_job_queue.get_jobs_by_name(bot_id)
+        if not jobs:
+            logger.error("Unable to find job for bot `%s`", bot_id)
+            return False
+        if len(jobs) > 1:
+            logger.warning("%d jobs found with ID `%s` - there may be a name collision", len(jobs), bot_id)
+        for job in jobs:
+            job.schedule_removal()
+            logger.info("Stopped job ID `%s`", job.name)
+        return True
+
+    def stop_all(self, context: CustomContext, logger: LoggerLike) -> None:
+        for inst in self.list_all(states={Lifecycle.RUNNING}):
+            self.stop_bot(inst.cfg.bot_id, context, logger)
+
+    def delete_bot(self, bot_id: str, context: CustomContext, logger: LoggerLike) -> bool:
+        if not self.stop_bot(bot_id, context, logger):
+            return False
+        inst = self._bots.pop(bot_id, None)
+        is_deleted = bool(inst)
+        return is_deleted
+
+    def delete_all(self, context: CustomContext, logger: LoggerLike, states: set[Lifecycle] | None = None) -> int:
+        deleted_counter = 0
+        for inst in self.list_all(states=states):
+            if self.delete_bot(inst.cfg.bot_id, context, logger):
+                deleted_counter += 1
+        return deleted_counter
 
     async def _search(self, context: CustomContext) -> None:
         job = context.job

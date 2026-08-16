@@ -31,6 +31,9 @@ class InternalError(Error):
 class BotRuntimeError(InternalError): ...
 
 
+class BookingRefresherError(InternalError): ...
+
+
 class AppNotInitializedError(InternalError): ...
 
 

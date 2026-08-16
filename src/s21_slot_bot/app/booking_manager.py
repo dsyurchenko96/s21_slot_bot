@@ -1,18 +1,28 @@
 import asyncio
+from collections import defaultdict
 from datetime import UTC, datetime
+from typing import Literal
 
+from pydantic import AwareDatetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import Job
 
 from s21_slot_bot.app.consts import CURRENT_BOOKINGS_SEARCH_WINDOW, UPCOMING_REVIEW_REMINDER_WINDOW
-from s21_slot_bot.app.errors import AppNotInitializedError
+from s21_slot_bot.app.errors import AppNotInitializedError, BookingRefresherError
 from s21_slot_bot.app.flows.actions import BookFlowAction
 from s21_slot_bot.app.messenger import Messenger
-from s21_slot_bot.app.models import App, BotInstance, CustomContext, FlowCategory, IntervalSec
+from s21_slot_bot.app.models import (
+    App,
+    BotInstance,
+    CustomContext,
+    FlowCategory,
+    IntervalSec,
+    Lifecycle,
+)
 from s21_slot_bot.app.utils import get_tzinfo
 from s21_slot_bot.client.errors import School21NoPointsError, School21SlotNotFoundError
-from s21_slot_bot.client.models import Booking, DryBooking
+from s21_slot_bot.client.models import Booking, BookingBase, DryBooking
 from s21_slot_bot.client.s21_client import School21Client
 from s21_slot_bot.common.id import hash_id
 from s21_slot_bot.common.logger import LogEntity, LoggerLike, get_id_logger
@@ -32,6 +42,7 @@ class BookingManager:
         self._s21_client = s21_client
         self._messenger = messenger
         self._dry_bookings: dict[str, DryBooking] = {}
+        self._state = Lifecycle.STOPPED
         self._bookings: dict[str, Booking] = {}
         self._booking_lock = asyncio.Lock()
         self._notifications_sent: dict[str, bool] = {}
@@ -42,17 +53,21 @@ class BookingManager:
 
     @property
     def bookings(self) -> dict[str, Booking]:
-        return self._bookings
+        return self._bookings.copy()
 
     @property
     def dry_bookings(self) -> dict[str, DryBooking]:
-        return self._dry_bookings
+        return self._dry_bookings.copy()
+
+    @property
+    def state(self) -> Lifecycle:
+        return self._state
 
     @property
     def is_refreshing(self) -> bool:
         return self._job is not None
 
-    def start_refreshing(self, logger: LoggerLike) -> None:
+    async def start_refreshing(self, logger: LoggerLike, run_immediately: bool = True) -> None:
         if not self._app.job_queue:
             raise AppNotInitializedError("очередь задач не инициализирована")
         if self._job is not None:
@@ -62,14 +77,28 @@ class BookingManager:
         self._job = self._app.job_queue.run_repeating(
             self._refresh_bookings, self._refresh_interval, chat_id=self._chat_id
         )
+        self._state = Lifecycle.RUNNING
+        if run_immediately:
+            await self._job.run(self._app)
 
-    def stop_refreshing(self, logger: LoggerLike) -> None:
-        if self._job is None:
-            logger.info("Booking refresher is already stopped")
-            return
-        logger.info("Stopping the booking refresher job")
-        self._job.schedule_removal()
-        self._job = None
+    def stop_refreshing(
+        self,
+        logger: LoggerLike,
+        state: Literal[Lifecycle.STOPPED, Lifecycle.FAILED] = Lifecycle.STOPPED,
+    ) -> None:
+        if self._job is not None:
+            logger.info("Stopping the booking refresher job")
+            self._job.schedule_removal()
+            self._job = None
+        else:
+            logger.info("Booking refresher job is already stopped")
+        self._state = state
+
+    async def refresh_now(self, context: CustomContext, logger: LoggerLike) -> None:
+        if self._state == Lifecycle.RUNNING:
+            await self._refresh_bookings(context)
+        else:
+            logger.info("Booking refresher job is not running, no refreshing will be done until it's started")
 
     async def book_dry(
         self,
@@ -89,7 +118,8 @@ class BookingManager:
             project_name=cfg.project_name,
             start=start_time,
         )
-        self._dry_bookings[dry_run_id] = dry_booking
+        async with self._booking_lock:
+            self._dry_bookings[dry_run_id] = dry_booking
         inst.stats.attempts_success += 1
         kb = InlineKeyboardMarkup(
             [
@@ -123,21 +153,21 @@ class BookingManager:
         cfg = inst.cfg
         tz = get_tzinfo(context)
         try:
-            booking_id = await self._s21_client.book(
-                answer_id=answer_id,
-                start_time=start_time,
-                is_staff_slot=is_staff_slot,
-                logger=logger,
-            )
-            booking = Booking(
-                id=booking_id,
-                answer_id=answer_id,
-                project_id=cfg.project_id,
-                project_name=cfg.project_name,
-                start=start_time,
-                is_online=True,
-            )
             async with self._booking_lock:
+                booking_id = await self._s21_client.book(
+                    answer_id=answer_id,
+                    start_time=start_time,
+                    is_staff_slot=is_staff_slot,
+                    logger=logger,
+                )
+                booking = Booking(
+                    id=booking_id,
+                    answer_id=answer_id,
+                    project_id=cfg.project_id,
+                    project_name=cfg.project_name,
+                    start=start_time,
+                    is_online=True,
+                )
                 self._bookings[booking_id] = booking
             inst.stats.currently_booked += 1
             inst.stats.attempts_success += 1
@@ -187,18 +217,28 @@ class BookingManager:
             async with self._booking_lock:
                 stale_bookings = self._bookings.copy()
                 self._bookings = fresh_bookings
+                self._remove_expired_dry_bookings(now)
             context.ensured_chat_data.last_booking_refresh_time = now
             cancelled_bookings = self._get_cancelled_bookings(fresh_bookings, stale_bookings, now, logger)
             await self._notify_on_cancelled_reviews(cancelled_bookings, context, logger)
             for booking_id, booking in fresh_bookings.items():
                 if (
-                    booking.start > now
+                    not is_expired_booking(booking, now)
                     and booking.start - now <= UPCOMING_REVIEW_REMINDER_WINDOW
                     and not self._notifications_sent.get(booking_id, False)
                 ):
                     await self._notify_on_upcoming_review(booking, context, logger)
-        except Exception:
+        except Exception as e:
             logger.exception("Failed to refresh bookings")
+            self.stop_refreshing(logger, state=Lifecycle.FAILED)
+            raise BookingRefresherError(f"ошибка при получении актуальных проверок, задача остановлена: {e}") from e
+
+    def _remove_expired_dry_bookings(self, now: AwareDatetime) -> None:
+        non_expired_dry_bookings: dict[str, DryBooking] = {}
+        for booking_id, booking in self._dry_bookings.items():
+            if not is_expired_booking(booking, now):
+                non_expired_dry_bookings[booking_id] = booking
+        self._dry_bookings = non_expired_dry_bookings
 
     def _get_cancelled_bookings(
         self,
@@ -213,7 +253,7 @@ class BookingManager:
         for removed_id in removed_ids:
             self._notifications_sent.pop(removed_id, None)
             stale = stale_bookings[removed_id]
-            if now >= stale.start:
+            if is_expired_booking(stale, now):
                 expired_ids.add(removed_id)
             else:
                 cancelled_ids.add(removed_id)
@@ -243,15 +283,25 @@ class BookingManager:
     ) -> None:
         if not cancelled_bookings:
             return
-
-        project_to_time = {
-            booking.project_name: dt_to_pretty(booking.start, tz=get_tzinfo(context)) for booking in cancelled_bookings
-        }
-        logger.info("Notifying on cancelled reviews: %s", project_to_time)
-        warning = ["⚠️ проверка отменена!" if len(project_to_time) == 1 else "⚠️ проверки отменены!"]
-        lines = [
-            f"🚫 проект {project_name} - слот на {cancelled_time}"
-            for project_name, cancelled_time in project_to_time.items()
-        ]
+        tz = get_tzinfo(context)
+        project_to_times: defaultdict[str, list[str]] = defaultdict(list)
+        for booking in cancelled_bookings:
+            start_pretty = dt_to_pretty(booking.start, tz=tz)
+            project_to_times[booking.project_name].append(start_pretty)
+        logger.info("Notifying on cancelled reviews: %s", project_to_times)
+        warning = ["⚠️ проверка отменена!" if len(cancelled_bookings) == 1 else "⚠️ проверки отменены!"]
+        lines = []
+        for project_name, cancelled_times in project_to_times.items():
+            time_message = (
+                f"слот на {cancelled_times[0]}"
+                if len(cancelled_times) == 1
+                else f"слоты на {', '.join(cancelled_times)}"
+            )
+            line = f"🚫 проект {project_name} - {time_message}"
+            lines.append(line)
         text = "\n".join(warning + lines)
         await self._messenger.send(context, text)
+
+
+def is_expired_booking(booking: BookingBase, now: AwareDatetime) -> bool:
+    return now >= booking.start

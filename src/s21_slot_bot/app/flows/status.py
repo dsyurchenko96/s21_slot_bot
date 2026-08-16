@@ -1,12 +1,12 @@
 from collections import defaultdict
-from typing import override
+from typing import assert_never, override
 
 from pydantic import AwareDatetime
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 
 from s21_slot_bot.app.consts import STATUS_LINE_INDENT
-from s21_slot_bot.app.errors import InvalidCallbackDataError
+from s21_slot_bot.app.errors import BookingRefresherError, InvalidCallbackDataError
 from s21_slot_bot.app.flows.actions import StatusFlowAction
 from s21_slot_bot.app.flows.base import Flow
 from s21_slot_bot.app.models import BotInstance, CustomContext, Lifecycle
@@ -20,25 +20,56 @@ from s21_slot_bot.common.time import dt_to_markdown, dt_to_pretty
 class StatusFlow(Flow):
     @override
     async def parse_callback(self, callback_data: list[str], query: CallbackQuery, context: CustomContext) -> None:
+        logger = get_user_input_logger(query)
         action = callback_data.pop()
         match action:
-            case StatusFlowAction.SHOW:
-                await self.status_show(query, context)
+            case StatusFlowAction.REFRESH:
+                await self.status_refresh(query, context)
+            case StatusFlowAction.START_BOOKING_REFRESHER:
+                await self._booking_manager.start_refreshing(logger, run_immediately=False)
+                await self.status_refresh(query, context)
+            case StatusFlowAction.STOP_BOOKING_REFRESHER:
+                self._booking_manager.stop_refreshing(logger)
+                await self.status_refresh(query, context)
             case _:
                 raise InvalidCallbackDataError(f"неподдерживаемое действие '{action}' при демонстрации статуса")
 
     # TODO: show numbers "booked/required"?
     # TODO: add Rich Messages once they're supported (https://github.com/python-telegram-bot/python-telegram-bot/issues/5261)
-    async def status_show(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
+    async def status_refresh(self, user_input: Update | CallbackQuery, context: CustomContext) -> None:
         logger = get_user_input_logger(user_input)
         logger.info("Showing status...")
+        try:
+            await self._booking_manager.refresh_now(context, logger)
+        except BookingRefresherError:
+            pass
         status_lines = self._get_status_lines(context)
         text = "\n".join(status_lines)
-        kb = InlineKeyboardMarkup(
-            [
-                [InlineKeyboardButton("🔄 обновить", callback_data=f"{self._category}:{StatusFlowAction.SHOW}")],
-            ]
-        )
+        buttons = [
+            [InlineKeyboardButton("🔄 обновить статус", callback_data=f"{self._category}:{StatusFlowAction.REFRESH}")],
+        ]
+        match self._booking_manager.state:
+            case Lifecycle.RUNNING:
+                buttons.append(
+                    [
+                        InlineKeyboardButton(
+                            "⏸️ остановить обновление проверок",
+                            callback_data=f"{self._category}:{StatusFlowAction.STOP_BOOKING_REFRESHER}",
+                        )
+                    ]
+                )
+            case Lifecycle.STOPPED | Lifecycle.FAILED:
+                buttons.append(
+                    [
+                        InlineKeyboardButton(
+                            "▶️ запустить обновление проверок",
+                            callback_data=f"{self._category}:{StatusFlowAction.START_BOOKING_REFRESHER}",
+                        )
+                    ]
+                )
+            case _ as unreachable:
+                assert_never(unreachable)
+        kb = InlineKeyboardMarkup(buttons)
         await self._messenger.render_menu_message(context, text, logger, kb=kb, parse_mode=ParseMode.MARKDOWN_V2)
 
     def _get_status_lines(self, context: CustomContext) -> list[str]:
@@ -68,7 +99,7 @@ class StatusFlow(Flow):
         return status_lines
 
     def _get_base_lines(self) -> list[str]:
-        num_running_bots = len(self._bot_manager.list_all(state=Lifecycle.RUNNING))
+        num_running_bots = len(self._bot_manager.list_all(states={Lifecycle.RUNNING}))
         num_total_bots = len(self._bot_manager.list_all())
         base_lines = [
             "📌 статус",
@@ -85,25 +116,25 @@ class StatusFlow(Flow):
         tz = get_tzinfo(context)
         from_pretty = dt_to_pretty(c.from_dt, tz=tz)
         to_pretty = dt_to_pretty(c.to_dt, tz=tz)
-        emoji = "▶️" if inst.state == Lifecycle.RUNNING else "⏸️"
+        state_emoji, state_text = inst.state.to_emoji_text()
         bot_lines = [
-            f"{emoji} #{c.bot_id} [{inst.state.to_text()}]",
+            f"{state_emoji} #{c.bot_id} [{state_text}]",
             f"проверок: {inst.stats.currently_booked}/{c.required_reviews}",
-            f"режим: {c.mode.to_text()}",
+            f"режим: {' '.join(c.mode.to_emoji_text())}",
             f"окно поиска: {from_pretty} → {to_pretty}",
             f"последняя попытка: {ensure_str(inst.stats.last_ping, getter=dt_to_pretty, tz=tz)}",
             f"всего: {inst.stats.attempts_total} ({inst.stats.attempts_success} успешных, {inst.stats.attempts_failed} с ошибкой)",
         ]
-        self._add_indent(bot_lines, STATUS_LINE_INDENT * 3, first_indent_delta=len(emoji) * 3)
+        self._add_indent(bot_lines, STATUS_LINE_INDENT * 3, first_indent_delta=len(state_emoji) * 3)
         return bot_lines
 
     def _get_booking_refresher_lines(self, context: CustomContext) -> list[str]:
-        emoji, state = ("▶️", "активно") if self._booking_manager.is_refreshing else ("⏸️", "остановлено")
+        emoji, state = self._booking_manager.state.to_emoji_text()
         last_refresh = ensure_str(
             context.ensured_chat_data.last_booking_refresh_time, getter=dt_to_pretty, tz=get_tzinfo(context)
         )
         booking_refresher_lines = [
-            f"{emoji} обновление актуальных проверок [{state}]",
+            f"{emoji} поиск актуальных проверок [{state}]",
             f"последний запуск: {last_refresh}",
             "\n",
         ]

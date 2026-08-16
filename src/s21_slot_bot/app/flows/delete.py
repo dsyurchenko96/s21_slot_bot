@@ -21,8 +21,10 @@ class DeleteFlow(Flow):
                 text = f"🗑️ бот #{bot_id} удален" if ok else f"⚠️ не удалось удалить бота #{bot_id}"
                 await self._messenger.render_menu_message(context, text, logger)
             case DeleteFlowAction.DELETE_ALL | DeleteFlowAction.DELETE_ALL_STOPPED:
-                state = Lifecycle.STOPPED if action == DeleteFlowAction.DELETE_ALL_STOPPED else None
-                num_deleted = self._bot_manager.delete_all(context, logger, state=state)
+                states = (
+                    {Lifecycle.STOPPED, Lifecycle.FAILED} if action == DeleteFlowAction.DELETE_ALL_STOPPED else None
+                )
+                num_deleted = self._bot_manager.delete_all(context, logger, states=states)
                 text = f"🗑️ удалено ботов: {num_deleted}" if num_deleted else "⚠️ не найдено ботов для удаления"
                 await self._messenger.render_menu_message(context, text, logger)
             case _:

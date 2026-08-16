@@ -4,7 +4,7 @@ import re
 import time
 import uuid
 from http import HTTPStatus
-from typing import Any
+from typing import Any, override
 from urllib.parse import parse_qs, quote, urljoin, urlparse
 
 import aiohttp
@@ -20,6 +20,7 @@ from s21_slot_bot.client.consts import (
 from s21_slot_bot.client.errors import (
     School21LoginError,
 )
+from s21_slot_bot.client.middleware.base import School21Middleware
 from s21_slot_bot.client.models import (
     ContentType,
     GrantType,
@@ -27,7 +28,7 @@ from s21_slot_bot.client.models import (
 )
 
 
-class School21AuthMiddleware:
+class School21AuthMiddleware(School21Middleware):
     def __init__(self, config: S21ClientConfig):
         self._username = config.username
         self._password = config.password
@@ -58,6 +59,7 @@ class School21AuthMiddleware:
     def _tokens_valid(self) -> bool:
         return self._tokens is not None and time.time() < self._tokens.expires_at_epoch
 
+    @override
     async def __call__(self, request: ClientRequest, handler: ClientHandlerType) -> ClientResponse:
         await self._ensure_authenticated(request.session)
         self._apply_auth(request)

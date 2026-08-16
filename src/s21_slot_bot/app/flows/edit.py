@@ -77,9 +77,9 @@ class EditFlow(CustomInputFlow):
             f"✏️ бот #{c.bot_id} ({project_name})\n"
             f"окно: {from_pretty} → {to_pretty}\n"
             f"интервал: {c.interval_sec} секунд\n"
-            f"режим: {c.mode.to_text()}\n"
+            f"режим: {' '.join(c.mode.to_emoji_text())}\n"
             f"количество проверок: {c.required_reviews}\n"
-            f"статус: {inst.state.to_text()}\n\n"
+            f"статус: {' '.join(inst.state.to_emoji_text())}\n\n"
         )
         return text
 
@@ -124,9 +124,7 @@ class EditFlow(CustomInputFlow):
                 inst = self._bot_manager.get_bot(bot_id)
                 match inst.cfg.mode:
                     case Mode.ONLY_FIND:
-                        menu_update_text = (
-                            f"поменять количество проверок можно только в режиме `{Mode.FIND_AND_BOOK.to_text()}`"
-                        )
+                        menu_update_text = f"поменять количество проверок можно только в режиме `{Mode.FIND_AND_BOOK.to_emoji_text()[-1]}`"
                         await self.edit_menu(query, context, update_text=menu_update_text)
                     case Mode.FIND_AND_BOOK:
                         await self.pick_num_reviews(query, context)
@@ -172,7 +170,7 @@ class EditFlow(CustomInputFlow):
             [
                 [
                     InlineKeyboardButton(
-                        f"✏️ #{b.cfg.bot_id} — {b.cfg.project_name} ({b.state.to_text()})",
+                        f"✏️ #{b.cfg.bot_id} — {b.cfg.project_name} ({b.state.to_emoji_text()[-1]})",
                         callback_data=f"{self._category}:{EditFlowAction.PICK_BOT}:{b.cfg.bot_id}",
                     )
                 ]
@@ -315,7 +313,5 @@ class EditFlow(CustomInputFlow):
         inst = self._bot_manager.get_bot(bot_id)
         if inst.state == Lifecycle.RUNNING:
             raise InvalidUserInputError(f"бот #{bot_id} уже активен", help_text="выбери другого бота")
-        self._bot_manager.check_bot_limits()
-
         await self._bot_manager.start_bot(inst, context, logger)
         await self.edit_menu(query, context, update_text=f"🔄 бот #{bot_id} перезапущен")

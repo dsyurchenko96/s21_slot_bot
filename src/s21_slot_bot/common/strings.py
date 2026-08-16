@@ -14,4 +14,5 @@ def ensure_str(field: Any, getter: Callable[..., str] | None = None, default: st
 
 
 def backtick_wrap(text: str) -> str:
+    text = text.replace("`", "")
     return f"`{text}`"

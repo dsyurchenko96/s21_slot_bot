@@ -24,8 +24,8 @@ class BotConfig(BaseSettings):
         description="Interval (in seconds) between sending requests to get current bookings",
         default=60,
     )
-    should_refresh_bookings_always: bool = Field(
-        alias="SHOULD_REFRESH_BOOKINGS_ALWAYS",
-        description="Whether background task to get current bookings should run always or only when there are active bot searches",
-        default=False,
+    should_refresh_bookings_on_active_bots: bool = Field(
+        alias="SHOULD_REFRESH_BOOKINGS_ON_ACTIVE_BOTS",
+        description="Whether background task to get current bookings should run only when there are active bot searches",
+        default=True,
     )

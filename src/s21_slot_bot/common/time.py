@@ -54,7 +54,7 @@ def safe_isoz_to_dt(isoz: str | None, tz: tzinfo, logger: LoggerLike) -> datetim
 
 def parse_to_datetime(text: str, tz: tzinfo, from_dt: AwareDatetime, logger: LoggerLike) -> datetime:
     parsers: list[tuple[str, DatetimeParser]] = [
-        ("time", lambda value: _parse_as_time(value, tz)),
+        ("time", lambda value: _parse_as_time(value, from_dt, tz)),
         ("date", lambda value: _parse_as_date(value, tz)),
         ("datetime", lambda value: _parse_as_datetime(value, tz)),
         ("timedelta", lambda value: _parse_as_timedelta(value, from_dt)),
@@ -62,10 +62,9 @@ def parse_to_datetime(text: str, tz: tzinfo, from_dt: AwareDatetime, logger: Log
     return _parse_with_chain(text, parsers, logger)
 
 
-def _parse_as_time(text: str, tz: tzinfo) -> datetime:
+def _parse_as_time(text: str, from_dt: AwareDatetime, tz: tzinfo) -> datetime:
     parsed_time = TimeAdapter.validate_strings(text)
-    now = datetime.now(tz=tz)
-    combined_dt = datetime.combine(now.date(), parsed_time, tzinfo=tz)
+    combined_dt = datetime.combine(from_dt.date(), parsed_time, tzinfo=tz)
     return combined_dt
 
 

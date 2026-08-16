@@ -47,7 +47,9 @@ class StartFlowAction(FlowAction):
 
 
 class StatusFlowAction(FlowAction):
-    SHOW = enum.auto()
+    REFRESH = enum.auto()
+    START_BOOKING_REFRESHER = enum.auto()
+    STOP_BOOKING_REFRESHER = enum.auto()
 
 
 class StopFlowAction(FlowAction):

@@ -26,6 +26,7 @@ from s21_slot_bot.client.errors import (
     School21SlotNotFoundError,
 )
 from s21_slot_bot.client.middleware.auth import School21AuthMiddleware
+from s21_slot_bot.client.middleware.base import School21Middleware
 from s21_slot_bot.client.middleware.retry import School21RetryMiddleware
 from s21_slot_bot.client.models import (
     Booking,
@@ -203,6 +204,7 @@ class School21Client:
                 "isOnline": is_online,
             },
             logger,
+            overridden_middleware=(self._auth_middleware,),  # disabling connection error retries for mutations
         )
         try:
             booking_id: str = data["student"]["addBookingP2PToEventSlot"]["id"]
@@ -216,6 +218,7 @@ class School21Client:
         operation_name: OperationName,
         variables: dict[str, Any],
         logger: LoggerLike,
+        overridden_middleware: tuple[School21Middleware] | None = None,
     ) -> dict[str, Any]:
         logger.info("Calling `%s` with variables `%s`", operation_name, variables)
         headers = {
@@ -238,6 +241,7 @@ class School21Client:
             GRAPHQL_URL,
             json=payload,
             headers=headers,
+            middlewares=overridden_middleware,
         ) as resp:
             if not resp.ok:
                 text = await resp.text()

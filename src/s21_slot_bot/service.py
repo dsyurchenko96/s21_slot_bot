@@ -38,6 +38,7 @@ class SlotBotService:
         flow_collector_factory: type[FlowCollector] = FlowCollector,
         input_handler_factory: type[InputHandler] = InputHandler,
     ):
+        self._config = config
         s21_auth_middleware = s21_auth_middleware_factory(config=config.s21)
         s21_retry_middleware = s21_retry_middleware_factory(config=config.s21)
         self._s21_client = s21_client_factory(
@@ -102,6 +103,8 @@ class SlotBotService:
         logger = get_id_logger(LogEntity.SERVICE_HOOK)
         logger.info("Running custom post-init application hook...")
         await self._s21_client.start()
+        if not self._config.bot.should_refresh_bookings_on_active_bots:
+            await self._booking_manager.start_refreshing(logger, run_immediately=False)
 
     async def _post_stop(self, application: App) -> None:
         logger = get_id_logger(LogEntity.SERVICE_HOOK)
