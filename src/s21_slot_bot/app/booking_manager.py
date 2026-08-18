@@ -8,7 +8,11 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import Job
 
-from s21_slot_bot.app.consts import CURRENT_BOOKINGS_SEARCH_WINDOW, UPCOMING_REVIEW_REMINDER_WINDOW
+from s21_slot_bot.app.consts import (
+    BOOKING_REFRESHER_JOB_NAME,
+    CURRENT_BOOKINGS_SEARCH_WINDOW,
+    UPCOMING_REVIEW_REMINDER_WINDOW,
+)
 from s21_slot_bot.app.errors import AppNotInitializedError, BookingRefresherError
 from s21_slot_bot.app.flows.actions import BookFlowAction
 from s21_slot_bot.app.messenger import Messenger
@@ -75,7 +79,10 @@ class BookingManager:
             return
         logger.info("Starting the booking refresher job")
         self._job = self._app.job_queue.run_repeating(
-            self._refresh_bookings, self._refresh_interval, chat_id=self._chat_id
+            self._refresh_bookings,
+            self._refresh_interval,
+            chat_id=self._chat_id,
+            name=BOOKING_REFRESHER_JOB_NAME,
         )
         self._state = Lifecycle.RUNNING
         if run_immediately:

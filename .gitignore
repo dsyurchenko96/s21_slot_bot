@@ -6,3 +6,5 @@ __pycache__
 diffs
 responses
 .DS_Store
+.coverage
+htmlcov

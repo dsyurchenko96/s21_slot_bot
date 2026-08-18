@@ -3,6 +3,7 @@ from pydantic import ValidationError
 from telegram import Message, Update
 
 from s21_slot_bot.app.bot_manager import BotManager
+from s21_slot_bot.app.consts import BOOKING_REFRESHER_JOB_NAME
 from s21_slot_bot.app.errors import (
     ForbiddenError,
     InternalError,
@@ -107,7 +108,7 @@ class InputHandler:
                 await self._messenger.send(context, error.to_pretty())
             case _:
                 await self._messenger.send(context, f"❌ неизвестная ошибка: {error}")
-        if (job := context.job) and job.name:
+        if (job := context.job) and job.name and job.name != BOOKING_REFRESHER_JOB_NAME:
             self._bot_manager.stop_bot(job.name, context, logger, state=Lifecycle.FAILED)
         logger.error("Exception while handling an update: %s", error, exc_info=error)
 

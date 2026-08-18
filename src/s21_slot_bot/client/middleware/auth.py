@@ -165,10 +165,11 @@ class School21AuthMiddleware(School21Middleware):
         if not access or not refresh:
             raise School21LoginError("не удалось извлечь токены из ответа")
         expires_in = float(payload.get("expires_in", DEFAULT_TOKEN_EXPIRATION_SEC))
+        now = time.time()
         self._tokens = Tokens(
             access_token=access,
             refresh_token=refresh,
-            expires_at_epoch=time.time() + expires_in,
+            expires_at_epoch=now + expires_in,
         )
 
     def _extract_login_action(self, html_text: str, base_url: str) -> str:

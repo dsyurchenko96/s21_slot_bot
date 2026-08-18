@@ -104,8 +104,7 @@ class BotManager:
             self._booking_manager.stop_refreshing(logger)
         jobs = context.ensured_job_queue.get_jobs_by_name(bot_id)
         if not jobs:
-            logger.error("Unable to find job for bot `%s`", bot_id)
-            return False
+            logger.info("Unable to find job for bot `%s`", bot_id)
         if len(jobs) > 1:
             logger.warning("%d jobs found with ID `%s` - there may be a name collision", len(jobs), bot_id)
         for job in jobs:

@@ -22,19 +22,15 @@ class School21RetryMiddleware(School21Middleware):
         handler: ClientHandlerType,
     ) -> ClientResponse:
         logger = get_id_logger(LogEntity.MIDDLEWARE)
-        last_error: aiohttp.ClientConnectionError | None = None
+        last_error: Exception | None = None
         for attempt in range(self._attempts):
             try:
                 response = await handler(request)
                 return response
-            except aiohttp.ClientConnectionError as e:
+            except (TimeoutError, aiohttp.ClientConnectionError) as e:
                 logger.error("Connection failed: %s", e)
                 last_error = e
                 if attempt == self._attempts - 1:
                     raise
                 await asyncio.sleep(self._delay_sec * (attempt + 1))
-        raise (
-            last_error
-            if isinstance(last_error, aiohttp.ClientConnectionError)
-            else InternalError("ошибка повторного запроса")
-        )
+        raise last_error if last_error is not None else InternalError("ошибка повторного запроса")
