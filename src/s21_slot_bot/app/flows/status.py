@@ -106,7 +106,7 @@ class StatusFlow(Flow):
             f"активных: {num_running_bots}",
             f"всего: {num_total_bots}",
             f"максимум: {self._bot_manager.max_bots}",
-            f"интервал: {self._bot_manager.poll_interval_sec} секунд",
+            f"интервал по-умолчанию: {self._bot_manager.poll_interval_sec} секунд",
             "\n",
         ]
         return base_lines
@@ -125,6 +125,8 @@ class StatusFlow(Flow):
             f"последняя попытка: {ensure_str(inst.stats.last_ping, getter=dt_to_pretty, tz=tz)}",
             f"всего: {inst.stats.attempts_total} ({inst.stats.attempts_success} успешных, {inst.stats.attempts_failed} с ошибкой)",
         ]
+        if c.interval_sec != self._bot_manager.poll_interval_sec:
+            bot_lines.append(f"интервал: {c.interval_sec}")
         self._add_indent(bot_lines, STATUS_LINE_INDENT * 3, first_indent_delta=len(state_emoji) * 3)
         return bot_lines
 
