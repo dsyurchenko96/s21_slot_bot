@@ -22,15 +22,21 @@ class School21RetryMiddleware(School21Middleware):
         handler: ClientHandlerType,
     ) -> ClientResponse:
         logger = get_id_logger(LogEntity.MIDDLEWARE)
-        last_error: Exception | None = None
-        for attempt in range(self._attempts):
+        for attempt in range(1, self._attempts + 1):
             try:
-                response = await handler(request)
-                return response
+                return await handler(request)
             except (TimeoutError, aiohttp.ClientConnectionError) as e:
-                logger.error("Connection failed: %s", e)
-                last_error = e
-                if attempt == self._attempts - 1:
+                logger.warning(
+                    "Request attempt %d/%d failed with %s: %s",
+                    attempt,
+                    self._attempts,
+                    type(e).__name__,
+                    e,
+                )
+                if attempt == self._attempts:
+                    logger.error("Request failed after %d attempts", self._attempts)
                     raise
-                await asyncio.sleep(self._delay_sec * (attempt + 1))
-        raise last_error if last_error is not None else InternalError("ошибка повторного запроса")
+                delay = self._delay_sec * attempt
+                logger.info("Retrying request in %.1f seconds", delay)
+                await asyncio.sleep(delay)
+        raise InternalError("недостижимое состояние retry middleware")

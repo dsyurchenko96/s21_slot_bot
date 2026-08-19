@@ -48,7 +48,11 @@ class School21Client:
         auth_middleware: School21AuthMiddleware,
         retry_middleware: School21RetryMiddleware,
     ):
-        self._timeout_sec = aiohttp.ClientTimeout(total=config.timeout_sec)
+        self._timeout = aiohttp.ClientTimeout(
+            total=config.timeout_total_sec,
+            sock_connect=config.timeout_connect_sec,
+            sock_read=config.timeout_read_sec,
+        )
         self._auth_middleware = auth_middleware
         self._retry_middleware = retry_middleware
         self._session_internal: aiohttp.ClientSession | None = None
@@ -69,7 +73,7 @@ class School21Client:
         if self._is_session_open:
             return
         self._session_internal = aiohttp.ClientSession(
-            timeout=self._timeout_sec,
+            timeout=self._timeout,
             middlewares=(
                 self._retry_middleware,
                 self._auth_middleware,

@@ -5,7 +5,9 @@ from pydantic_settings import BaseSettings
 class S21ClientConfig(BaseSettings):
     username: str = Field(alias="S21_USERNAME")
     password: SecretStr = Field(alias="S21_PASSWORD")
-    timeout_sec: NonNegativeInt = Field(alias="S21_TIMEOUT_SEC", default=25)
+    timeout_total_sec: NonNegativeInt = Field(alias="S21_TIMEOUT_TOTAL_SEC", default=90)
+    timeout_connect_sec: NonNegativeInt = Field(alias="S21_TIMEOUT_CONNECT_SEC", default=10)
+    timeout_read_sec: NonNegativeInt = Field(alias="S21_TIMEOUT_READ_SEC", default=20)
     max_request_retries: PositiveInt = Field(
         alias="S21_MAX_REQUEST_RETRIES",
         description="Maximum number of request retries. Set to 1 to disable retries",
