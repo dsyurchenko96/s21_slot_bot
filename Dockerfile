@@ -45,4 +45,4 @@ ENTRYPOINT []
 USER nonroot
 
 # Run the application by default
-CMD ["uv", "run", "-m", "src.s21_slot_bot"]
+CMD ["python", "-m", "src.s21_slot_bot"]
