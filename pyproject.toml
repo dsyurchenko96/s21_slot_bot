@@ -16,12 +16,11 @@ line-length = 120
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = [
-    "-n",
-    "auto",
-    "--cov=s21_slot_bot",
-    "--cov-report=term-missing:skip-covered",
-    "--cov-fail-under=80",
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
 ]
 
 [project]

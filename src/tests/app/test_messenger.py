@@ -2,105 +2,123 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import telegram
-from telegram import Message
+from telegram import Message, Update
 from telegram.constants import ParseMode
+from telegram.ext import ExtBot
 
+from s21_slot_bot.app.errors import InternalError
 from s21_slot_bot.app.messenger import Messenger
 from s21_slot_bot.app.models import CustomContext
 from s21_slot_bot.common.logger import LoggerLike
 
 
 class TestMessenger:
-    async def test_send_marks_menu_for_moving(
+    async def test_start_menu(
         self,
         messenger: Messenger,
+        update_mock: Update,
+        logger_mock: LoggerLike,
+    ) -> None:
+        reply = MagicMock(spec=Message)
+        reply.message_id = 11
+        update_mock.message.reply_text = AsyncMock(return_value=reply)
+        messenger.safe_delete = AsyncMock()
+        await messenger.start_menu(update_mock, logger_mock)
+        assert [c.args[0] for c in messenger.safe_delete.await_args_list] == [10, 11]
+
+    async def test_start_menu_requires_message(
+        self,
+        messenger: Messenger,
+        update_mock: Update,
+        logger_mock: LoggerLike,
+    ) -> None:
+        update_mock.message = None
+        with pytest.raises(InternalError):
+            await messenger.start_menu(update_mock, logger_mock)
+
+    async def test_send_and_markdown(
+        self,
+        messenger: Messenger,
+        bot_mock: ExtBot,
         context: CustomContext,
     ) -> None:
-        message = MagicMock(spec=Message)
-        messenger._bot.send_message = AsyncMock(return_value=message)
-
-        actual = await messenger.send(context, "hello")
-
-        assert actual is message
+        bot_mock.send_message = AsyncMock(return_value=MagicMock(spec=Message))
+        await messenger.send(context, "hello.world", parse_mode=ParseMode.MARKDOWN_V2)
+        assert bot_mock.send_message.await_args.args[1] == r"hello\.world"
         assert context.bot_data.chat_should_move_menu[messenger._chat_id] is True
 
-    async def test_send_escapes_markdown(
+    async def test_safe_delete(
         self,
         messenger: Messenger,
-        context: CustomContext,
-    ) -> None:
-        messenger._bot.send_message = AsyncMock(return_value=MagicMock(spec=Message))
-
-        await messenger.send(
-            context,
-            "hello.world",
-            parse_mode=ParseMode.MARKDOWN_V2,
-        )
-
-        assert messenger._bot.send_message.await_args.args[1] == r"hello\.world"
-
-    async def test_safe_delete_ignores_bad_request(
-        self,
-        messenger: Messenger,
+        bot_mock: ExtBot,
         logger_mock: LoggerLike,
     ) -> None:
-        messenger._bot.delete_message = AsyncMock(side_effect=telegram.error.BadRequest("message to delete not found"))
+        bot_mock.delete_message = AsyncMock()
+        await messenger.safe_delete(None, logger_mock)
+        bot_mock.delete_message.assert_not_awaited()
+        await messenger.safe_delete(10, logger_mock)
+        bot_mock.delete_message.assert_awaited_once()
 
-        await messenger.safe_delete(123, logger_mock)
+        bot_mock.delete_message = AsyncMock(side_effect=telegram.error.BadRequest("gone"))
+        await messenger.safe_delete(10, logger_mock)
 
-    async def test_render_menu_message_reuses_existing_message(
+    async def test_render_menu_message(
         self,
         messenger: Messenger,
+        bot_mock: ExtBot,
         context: CustomContext,
         logger_mock: LoggerLike,
     ) -> None:
-        context.ensured_chat_data.menu_msg_id = 123
-        messenger._bot.edit_message_text = AsyncMock()
+        message = MagicMock(spec=Message)
+        message.message_id = 20
+        bot_mock.send_message = AsyncMock(return_value=message)
+        bot_mock.edit_message_text = AsyncMock()
+        await messenger.render_menu_message(context, "hello.world", logger_mock, parse_mode=ParseMode.MARKDOWN_V2)
+        assert context.ensured_chat_data.menu_msg_id == 20
+        assert bot_mock.edit_message_text.await_args.kwargs["text"] == r"hello\.world"
 
-        await messenger.render_menu_message(context, "status", logger_mock)
-
-        assert context.ensured_chat_data.menu_msg_id == 123
-        messenger._bot.edit_message_text.assert_awaited_once()
-
-    async def test_render_menu_message_moves_menu_after_regular_message(
+    async def test_render_menu_message_moves_menu(
         self,
         messenger: Messenger,
+        bot_mock: ExtBot,
         context: CustomContext,
         logger_mock: LoggerLike,
     ) -> None:
+        context.ensured_chat_data.menu_msg_id = 10
         context.bot_data.chat_should_move_menu[messenger._chat_id] = True
-        context.ensured_chat_data.menu_msg_id = 123
         messenger.safe_delete = AsyncMock()
-        messenger._ensure_message = AsyncMock(return_value=456)
-        messenger._bot.edit_message_text = AsyncMock()
-
+        messenger._ensure_message = AsyncMock(return_value=20)
+        bot_mock.edit_message_text = AsyncMock()
         await messenger.render_menu_message(context, "status", logger_mock)
-
-        messenger.safe_delete.assert_awaited_once_with(123, logger_mock)
+        assert context.ensured_chat_data.menu_msg_id == 20
         assert context.bot_data.chat_should_move_menu[messenger._chat_id] is False
-        assert context.ensured_chat_data.menu_msg_id == 456
 
-    async def test_render_menu_error_ignores_not_modified(
+    async def test_render_menu_error(
         self,
         messenger: Messenger,
+        bot_mock: ExtBot,
         context: CustomContext,
         logger_mock: LoggerLike,
     ) -> None:
-        context.ensured_chat_data.menu_error_msg_id = 123
-        messenger._bot.edit_message_text = AsyncMock(side_effect=telegram.error.BadRequest("Message is not modified"))
+        messenger._ensure_message = AsyncMock(return_value=10)
+        bot_mock.edit_message_text = AsyncMock()
+        await messenger.render_menu_error(context, "hello.world", logger_mock, parse_mode=ParseMode.MARKDOWN_V2)
+        assert bot_mock.edit_message_text.await_args.kwargs["text"] == r"hello\.world"
 
+        bot_mock.edit_message_text = AsyncMock(side_effect=telegram.error.BadRequest("Message is not modified"))
         await messenger.render_menu_error(context, "same", logger_mock)
 
-    async def test_render_menu_error_reraises_other_bad_request(
-        self,
-        messenger: Messenger,
-        context: CustomContext,
-        logger_mock: LoggerLike,
-    ) -> None:
-        context.ensured_chat_data.menu_error_msg_id = 123
-        messenger._bot.edit_message_text = AsyncMock(side_effect=telegram.error.BadRequest("other error"))
-
-        with pytest.raises(telegram.error.BadRequest) as exc_info:
+        bot_mock.edit_message_text = AsyncMock(side_effect=telegram.error.BadRequest("other error"))
+        with pytest.raises(telegram.error.BadRequest):
             await messenger.render_menu_error(context, "bad", logger_mock)
 
-        assert exc_info.value.message == "other error"
+    async def test_ensure_message(
+        self,
+        messenger: Messenger,
+        bot_mock: ExtBot,
+    ) -> None:
+        assert await messenger._ensure_message(10) == 10
+        message = MagicMock(spec=Message)
+        message.message_id = 20
+        bot_mock.send_message = AsyncMock(return_value=message)
+        assert await messenger._ensure_message(None) == 20

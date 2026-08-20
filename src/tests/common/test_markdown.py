@@ -19,12 +19,7 @@ class TestMarkdownV2Escaper:
             ("", ""),
         ],
     )
-    def test_escape_plain_text(
-        self,
-        escaper: MarkdownV2Escaper,
-        text: str,
-        expected: str,
-    ) -> None:
+    def test_escape_plain_text(self, escaper: MarkdownV2Escaper, text: str, expected: str) -> None:
         assert escaper.escape(text) == expected
 
     @pytest.mark.parametrize(

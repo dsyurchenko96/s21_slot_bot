@@ -18,3 +18,10 @@ repos:
         entry: uv run mypy src
         language: system
         pass_filenames: false
+
+      - id: pytest
+        name: pytest
+        entry: uv run pytest -n auto --cov=s21_slot_bot --cov-fail-under=95
+        language: system
+        pass_filenames: false
+        stages: [ pre-commit ]
