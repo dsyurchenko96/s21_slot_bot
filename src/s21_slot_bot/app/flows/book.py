@@ -31,7 +31,7 @@ class BookFlow(Flow):
 
                 logger.info("Attempting to book answer_id `%s` at `%s`", dry_booking.answer_id, dry_booking.start)
                 try:
-                    are_p2p_points_left = await self._booking_manager.book(
+                    are_review_points_left = await self._booking_manager.book(
                         inst=inst,
                         answer_id=dry_booking.answer_id,
                         start_time=dry_booking.start,
@@ -39,7 +39,7 @@ class BookFlow(Flow):
                         logger=logger,
                         context=context,
                     )
-                    if not are_p2p_points_left:
+                    if not are_review_points_left:
                         self._bot_manager.stop_bot(cfg.bot_id, context, logger)
                 except School21Error as e:
                     raise BotRuntimeError(f"бот #{bot_id} ({cfg.project_name}): не удалось записаться") from e

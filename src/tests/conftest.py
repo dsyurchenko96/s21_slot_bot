@@ -1,6 +1,8 @@
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from http import HTTPStatus
 from logging import Logger
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, create_autospec
 from zoneinfo import ZoneInfo
 
@@ -89,11 +91,6 @@ def request_mock(session_mock: aiohttp.ClientSession) -> aiohttp.ClientRequest:
     request.url = aiohttp.client_reqrep.URL("https://platform.21-school.ru/services/graphql")
     request.headers = {}
     return request
-
-
-@pytest.fixture
-def response_mock() -> aiohttp.ClientResponse:
-    return MagicMock(spec=aiohttp.ClientResponse)
 
 
 @pytest.fixture
@@ -402,7 +399,37 @@ def service(
     )
 
 
-# ------------- DOMAIN FACTORIES -------------
+# ------------- FACTORIES -------------
+
+
+@pytest.fixture
+def response_factory() -> Callable[..., aiohttp.ClientResponse]:
+    def factory(
+        *,
+        status: HTTPStatus = HTTPStatus.OK,
+        reason: str = "",
+        text: str = "",
+        json: Any = None,
+        history: list | None = None,
+    ) -> aiohttp.ClientResponse:
+        response = MagicMock(spec=aiohttp.ClientResponse)
+        response.status = status
+        response.ok = status < HTTPStatus.BAD_REQUEST
+        response.reason = reason
+        response.text = AsyncMock(return_value=text)
+        response.json = AsyncMock(return_value=json or {})
+        response.history = history or []
+
+        def _raise_for_status() -> None:
+            if not response.ok:
+                raise aiohttp.ClientResponseError(
+                    request_info=MagicMock(), history=(MagicMock(),), status=response.status
+                )
+
+        response.raise_for_status = _raise_for_status
+        return response
+
+    return factory
 
 
 @pytest.fixture

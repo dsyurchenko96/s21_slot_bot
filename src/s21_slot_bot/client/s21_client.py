@@ -9,6 +9,7 @@ from typing import Any, NoReturn
 
 import aiohttp
 
+from s21_slot_bot.app.errors import AppNotInitializedError
 from s21_slot_bot.client.config import S21ClientConfig
 from s21_slot_bot.client.consts import (
     GRAPHQL_QUERIES_MODULE,
@@ -62,7 +63,7 @@ class School21Client:
     @property
     def _session(self) -> aiohttp.ClientSession:
         if not self._is_session_open:
-            raise RuntimeError("School21Client не инициализирован")
+            raise AppNotInitializedError("клиент не инициализирован")
         return self._session_internal  # type: ignore [return-value]
 
     @property
@@ -251,7 +252,7 @@ class School21Client:
                 text = await resp.text()
                 raise School21Error(
                     f"ошибка запроса к Школе 21 во время исполнения операции "
-                    f"`{operation_name}`: `{resp.status} {resp.reason}`",
+                    f"{operation_name}: {resp.status} {resp.reason}",
                     status=HTTPStatus(resp.status),
                     location={
                         "operation": operation_name,
@@ -261,7 +262,7 @@ class School21Client:
                 )
             resp_body: dict[str, Any] = await resp.json()
             logger.debug(
-                "Received response from operation `%s`: %s",
+                "Received response from operation %s: %s",
                 operation_name,
                 json.dumps(resp_body, indent=2, ensure_ascii=False),
             )
@@ -281,8 +282,8 @@ class School21Client:
         for error in errors:
             error_type = error and error.get("extensions", {}).get("uiErrorCode")
             match error_type:
-                case School21ErrorType.NO_P2P_POINTS:
-                    raise School21NoPointsError("недостаточно P2P-пойнтов для записи на проверку", location=location)
+                case School21ErrorType.NO_PRP:
+                    raise School21NoPointsError("недостаточно PRP для записи на проверку", location=location)
                 case School21ErrorType.SLOT_NOT_FOUND:
                     raise School21SlotNotFoundError("слот не найден", location=location)
 

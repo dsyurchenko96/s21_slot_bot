@@ -9,7 +9,7 @@ from s21_slot_bot.app.booking_manager import BookingManager, is_expired_booking
 from s21_slot_bot.app.errors import AppNotInitializedError, BookingRefresherError
 from s21_slot_bot.app.messenger import Messenger
 from s21_slot_bot.app.models import BotInstance, CustomContext, Lifecycle
-from s21_slot_bot.client.errors import School21NoPointsError, School21SlotNotFoundError
+from s21_slot_bot.client.errors import School21Error, School21NoPointsError, School21SlotNotFoundError
 from s21_slot_bot.client.models import Booking, DryBooking
 from s21_slot_bot.client.s21_client import School21Client
 from s21_slot_bot.common.logger import LoggerLike
@@ -233,7 +233,7 @@ class TestBookingManager:
     ) -> None:
         booking_manager._job = job_mock
         booking_manager._state = Lifecycle.RUNNING
-        s21_client.get_bookings = AsyncMock(side_effect=RuntimeError("boom"))
+        s21_client.get_bookings = AsyncMock(side_effect=School21Error("oops"))
         with pytest.raises(BookingRefresherError):
             await booking_manager._refresh_bookings(context)
         assert booking_manager.state == Lifecycle.FAILED

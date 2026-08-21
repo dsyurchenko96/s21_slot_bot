@@ -185,7 +185,7 @@ class BotManager:
                     )
                     self.stop_bot(cfg.bot_id, context, logger)
                 case Mode.FIND_AND_BOOK:
-                    are_p2p_points_left = await self._booking_manager.book(
+                    are_review_points_left = await self._booking_manager.book(
                         inst=inst,
                         answer_id=answer_id,
                         start_time=start_time,
@@ -193,7 +193,7 @@ class BotManager:
                         context=context,
                         is_staff_slot=is_staff_slot,
                     )
-                    if not are_p2p_points_left:
+                    if not are_review_points_left:
                         self.stop_bot(cfg.bot_id, context, logger)
         except Exception as e:
             inst.stats.attempts_failed += 1

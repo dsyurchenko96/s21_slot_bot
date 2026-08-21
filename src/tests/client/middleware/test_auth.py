@@ -1,4 +1,5 @@
 import time
+from collections.abc import Callable
 from http import HTTPStatus
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -100,12 +101,12 @@ class TestSchool21AuthMiddleware:
         s21_auth_middleware: School21AuthMiddleware,
         valid_tokens: Tokens,
         request_mock: aiohttp.ClientRequest,
-        response_mock: aiohttp.ClientResponse,
+        response_factory: Callable[..., aiohttp.ClientResponse],
     ) -> None:
         s21_auth_middleware._tokens = valid_tokens
         s21_auth_middleware._ensure_authenticated = AsyncMock()
         s21_auth_middleware._apply_auth = MagicMock()
-        response_mock.status = HTTPStatus.OK
+        response_mock = response_factory()
         handler = AsyncMock(return_value=response_mock)
         assert await s21_auth_middleware(request_mock, handler) is response_mock
         handler.assert_awaited_once_with(request_mock)
@@ -116,16 +117,15 @@ class TestSchool21AuthMiddleware:
         s21_auth_middleware: School21AuthMiddleware,
         valid_tokens: Tokens,
         request_mock: aiohttp.ClientRequest,
+        response_factory: Callable[..., aiohttp.ClientResponse],
         status: HTTPStatus,
     ) -> None:
         s21_auth_middleware._tokens = valid_tokens
         s21_auth_middleware._ensure_authenticated = AsyncMock()
         s21_auth_middleware._force_reauthenticate = AsyncMock()
         s21_auth_middleware._apply_auth = MagicMock()
-        failed = MagicMock(spec=aiohttp.ClientResponse)
-        failed.status = status
-        successful = MagicMock(spec=aiohttp.ClientResponse)
-        successful.status = HTTPStatus.OK
+        failed = response_factory(status=status)
+        successful = response_factory()
         handler = AsyncMock(side_effect=[failed, successful])
         assert await s21_auth_middleware(request_mock, handler) is successful
         failed.release.assert_called_once()
@@ -152,17 +152,12 @@ class TestSchool21AuthMiddleware:
         self,
         s21_auth_middleware: School21AuthMiddleware,
         session_mock: aiohttp.ClientSession,
+        response_factory: Callable[..., aiohttp.ClientResponse],
     ) -> None:
-        auth_response = MagicMock(spec=aiohttp.ClientResponse)
-        auth_response.ok = True
-        auth_response.text = AsyncMock(return_value="<html>")
-        action_response = MagicMock(spec=aiohttp.ClientResponse)
-        action_response.status = HTTPStatus.OK
-        action_response.history = []
-        token_response = MagicMock(spec=aiohttp.ClientResponse)
-        token_response.ok = True
-        token_response.json = AsyncMock(
-            return_value={"access_token": "access", "refresh_token": "refresh", "expires_in": 120}
+        auth_response = response_factory(text="<html>")
+        action_response = response_factory()
+        token_response = response_factory(
+            json={"access_token": "access", "refresh_token": "refresh", "expires_in": 120}
         )
         s21_auth_middleware._extract_login_action = MagicMock(return_value="https://auth/action")
         s21_auth_middleware._extract_code_from_redirect_history = MagicMock(return_value="code")
@@ -178,12 +173,9 @@ class TestSchool21AuthMiddleware:
         self,
         s21_auth_middleware: School21AuthMiddleware,
         session_mock: aiohttp.ClientSession,
+        response_factory: Callable[..., aiohttp.ClientResponse],
     ) -> None:
-        response = MagicMock(spec=aiohttp.ClientResponse)
-        response.ok = False
-        response.status = HTTPStatus.BAD_GATEWAY
-        response.reason = "Bad Gateway"
-        response.text = AsyncMock(return_value="bad")
+        response = response_factory(status=HTTPStatus.BAD_GATEWAY, reason="Bad Gateway", text="bad")
         session_mock.get.return_value = response_context(response)
         with pytest.raises(School21LoginError) as exc_info:
             await s21_auth_middleware._login(session_mock)
@@ -193,13 +185,10 @@ class TestSchool21AuthMiddleware:
         self,
         s21_auth_middleware: School21AuthMiddleware,
         session_mock: aiohttp.ClientSession,
+        response_factory: Callable[..., aiohttp.ClientResponse],
     ) -> None:
-        auth_response = MagicMock(spec=aiohttp.ClientResponse)
-        auth_response.ok = True
-        auth_response.text = AsyncMock(return_value="<html>")
-        action_response = MagicMock(spec=aiohttp.ClientResponse)
-        action_response.status = HTTPStatus.UNAUTHORIZED
-        action_response.history = []
+        auth_response = response_factory(text="<html>")
+        action_response = response_factory(status=HTTPStatus.UNAUTHORIZED)
         s21_auth_middleware._extract_login_action = MagicMock(return_value="https://auth/action")
         s21_auth_middleware._extract_code_from_redirect_history = MagicMock(return_value=None)
         session_mock.get.return_value = response_context(auth_response)
@@ -211,18 +200,11 @@ class TestSchool21AuthMiddleware:
         self,
         s21_auth_middleware: School21AuthMiddleware,
         session_mock: aiohttp.ClientSession,
+        response_factory: Callable[..., aiohttp.ClientResponse],
     ) -> None:
-        auth_response = MagicMock(spec=aiohttp.ClientResponse)
-        auth_response.ok = True
-        auth_response.text = AsyncMock(return_value="<html>")
-        action_response = MagicMock(spec=aiohttp.ClientResponse)
-        action_response.status = HTTPStatus.OK
-        action_response.history = []
-        token_response = MagicMock(spec=aiohttp.ClientResponse)
-        token_response.ok = False
-        token_response.status = HTTPStatus.UNAUTHORIZED
-        token_response.reason = "Unauthorized"
-        token_response.text = AsyncMock(return_value="bad token")
+        auth_response = response_factory(text="<html>")
+        action_response = response_factory()
+        token_response = response_factory(status=HTTPStatus.UNAUTHORIZED, reason="Unauthorized", text="bad token")
         s21_auth_middleware._extract_login_action = MagicMock(return_value="https://auth/action")
         s21_auth_middleware._extract_code_from_redirect_history = MagicMock(return_value="code")
         session_mock.get.return_value = response_context(auth_response)

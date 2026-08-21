@@ -1,3 +1,5 @@
+from collections.abc import Callable
+from http import HTTPStatus
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
@@ -11,8 +13,9 @@ class TestSchool21RetryMiddleware:
         self,
         s21_retry_middleware: School21RetryMiddleware,
         request_mock: aiohttp.ClientRequest,
-        response_mock: aiohttp.ClientResponse,
+        response_factory: Callable[..., aiohttp.ClientResponse],
     ) -> None:
+        response_mock = response_factory()
         handler = AsyncMock(return_value=response_mock)
 
         assert await s21_retry_middleware(request_mock, handler) is response_mock
@@ -22,8 +25,9 @@ class TestSchool21RetryMiddleware:
         self,
         s21_retry_middleware: School21RetryMiddleware,
         request_mock: aiohttp.ClientRequest,
-        response_mock: aiohttp.ClientResponse,
+        response_factory: Callable[..., aiohttp.ClientResponse],
     ) -> None:
+        response_mock = response_factory()
         handler = AsyncMock(
             side_effect=[
                 aiohttp.ClientConnectionError("first"),
@@ -34,6 +38,29 @@ class TestSchool21RetryMiddleware:
 
         with patch("s21_slot_bot.client.middleware.retry.asyncio.sleep", new_callable=AsyncMock) as sleep:
             assert await s21_retry_middleware(request_mock, handler) is response_mock
+
+        assert handler.await_count == 3
+        assert [call.args[0] for call in sleep.await_args_list] == [2, 4]
+
+    async def test_server_errors_are_retried(
+        self,
+        s21_retry_middleware: School21RetryMiddleware,
+        request_mock: aiohttp.ClientRequest,
+        response_factory: Callable[..., aiohttp.ClientResponse],
+    ) -> None:
+        internal_error_response = response_factory(status=HTTPStatus.INTERNAL_SERVER_ERROR)
+        bad_gateway_response = response_factory(status=HTTPStatus.BAD_GATEWAY)
+        ok_response = response_factory()
+        handler = AsyncMock(
+            side_effect=[
+                internal_error_response,
+                bad_gateway_response,
+                ok_response,
+            ]
+        )
+
+        with patch("s21_slot_bot.client.middleware.retry.asyncio.sleep", new_callable=AsyncMock) as sleep:
+            assert await s21_retry_middleware(request_mock, handler) is ok_response
 
         assert handler.await_count == 3
         assert [call.args[0] for call in sleep.await_args_list] == [2, 4]

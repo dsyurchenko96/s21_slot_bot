@@ -11,10 +11,15 @@ class S21ClientConfig(BaseSettings):
     max_request_retries: PositiveInt = Field(
         alias="S21_MAX_REQUEST_RETRIES",
         description="Maximum number of request retries. Set to 1 to disable retries",
-        default=3,
+        default=7,
     )
     retry_delay_sec: NonNegativeInt = Field(
         alias="S21_RETRY_DELAY_SEC",
-        description="Initial delay (in seconds) between retries, each consecutive delay is multiplied by the attempt number",
+        description="Initial delay (in seconds) between retries",
+        default=2,
+    )
+    retry_backoff: PositiveInt = Field(
+        alias="S21_RETRY_BACKOFF",
+        description="Multiplier applied to delay between attempts",
         default=2,
     )

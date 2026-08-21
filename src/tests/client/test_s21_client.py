@@ -1,10 +1,12 @@
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from http import HTTPStatus
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import aiohttp
 import pytest
 
+from s21_slot_bot.app.errors import AppNotInitializedError
 from s21_slot_bot.client.errors import (
     School21Error,
     School21NoPointsError,
@@ -19,7 +21,7 @@ from tests.conftest import response_context
 
 class TestSchool21Client:
     def test_session_guard(self, s21_client: School21Client) -> None:
-        with pytest.raises(RuntimeError):
+        with pytest.raises(AppNotInitializedError):
             _ = s21_client._session
 
     async def test_start_and_stop_session(
@@ -275,13 +277,10 @@ class TestSchool21Client:
         s21_client: School21Client,
         logger_mock: LoggerLike,
         session_mock: aiohttp.ClientSession,
-        response_mock: aiohttp.ClientResponse,
+        response_factory: Callable[..., aiohttp.ClientResponse],
     ) -> None:
-        response_mock.ok = True
-        response_mock.json = AsyncMock(return_value={"data": {"user": {"id": "x"}}})
-        request_context = MagicMock()
-        request_context.__aenter__ = AsyncMock(return_value=response_mock)
-        session_mock.post.return_value = request_context
+        response_mock = response_factory(json={"data": {"user": {"id": "x"}}})
+        session_mock.post.return_value = response_context(response_mock)
         s21_client._session_internal = session_mock
         assert await s21_client._graphql(OperationName.GET_USER, {}, logger_mock) == {"user": {"id": "x"}}
 
@@ -290,11 +289,10 @@ class TestSchool21Client:
         s21_client: School21Client,
         logger_mock: LoggerLike,
         session_mock: aiohttp.ClientSession,
-        response_mock: aiohttp.ClientResponse,
+        response_factory: Callable[..., aiohttp.ClientResponse],
     ) -> None:
-        response_mock.ok = True
-        response_mock.json = AsyncMock(
-            return_value={"errors": [{"extensions": {"uiErrorCode": "TIMETABLE_TIMESLOTS_NOT_FOUND"}}]}
+        response_mock = response_factory(
+            json={"errors": [{"extensions": {"uiErrorCode": "TIMETABLE_TIMESLOTS_NOT_FOUND"}}]}
         )
         session_mock.post.return_value = response_context(response_mock)
         s21_client._session_internal = session_mock
@@ -306,12 +304,9 @@ class TestSchool21Client:
         s21_client: School21Client,
         logger_mock: LoggerLike,
         session_mock: aiohttp.ClientSession,
-        response_mock: aiohttp.ClientResponse,
+        response_factory: Callable[..., aiohttp.ClientResponse],
     ) -> None:
-        response_mock.ok = False
-        response_mock.status = HTTPStatus.BAD_GATEWAY
-        response_mock.reason = "Bad Gateway"
-        response_mock.text = AsyncMock(return_value="upstream")
+        response_mock = response_factory(status=HTTPStatus.BAD_GATEWAY, reason="Bad Gateway", text="upstream")
         session_mock.post.return_value = response_context(response_mock)
         s21_client._session_internal = session_mock
         with pytest.raises(School21Error) as exc_info:

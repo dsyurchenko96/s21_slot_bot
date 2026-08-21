@@ -25,7 +25,7 @@ from s21_slot_bot.app.models import (
     Lifecycle,
 )
 from s21_slot_bot.app.utils import get_tzinfo
-from s21_slot_bot.client.errors import School21NoPointsError, School21SlotNotFoundError
+from s21_slot_bot.client.errors import School21Error, School21NoPointsError, School21SlotNotFoundError
 from s21_slot_bot.client.models import Booking, BookingBase, DryBooking
 from s21_slot_bot.client.s21_client import School21Client
 from s21_slot_bot.common.id import hash_id
@@ -156,7 +156,7 @@ class BookingManager:
         context: CustomContext,
         is_staff_slot: bool = False,
     ) -> bool:
-        are_p2p_points_left = True
+        are_review_points_left = True
         cfg = inst.cfg
         tz = get_tzinfo(context)
         try:
@@ -187,10 +187,10 @@ class BookingManager:
             )
         except School21NoPointsError:
             logger.info("Not enough points to book")
-            are_p2p_points_left = False
+            are_review_points_left = False
             await self._messenger.send(
                 context,
-                f"⛔ бот #{cfg.bot_id} ({cfg.project_name}): остановлен, недостаточно P2P пойнтов",
+                f"⛔ бот #{cfg.bot_id} ({cfg.project_name}): остановлен, недостаточно PRP",
             )
         except School21SlotNotFoundError as e:
             logger.info("Slot is no longer available")
@@ -208,7 +208,7 @@ class BookingManager:
                 context,
                 f"⚠️ бот #{cfg.bot_id} ({cfg.project_name}): {cancelled_slot_message}",
             )
-        return are_p2p_points_left
+        return are_review_points_left
 
     def pop_dry(self, dry_run_id: str) -> DryBooking | None:
         dry_booking = self._dry_bookings.pop(dry_run_id, None)
@@ -235,10 +235,12 @@ class BookingManager:
                     and not self._notifications_sent.get(booking_id, False)
                 ):
                     await self._notify_on_upcoming_review(booking, context, logger)
-        except Exception as e:
+        except School21Error as e:
             logger.exception("Failed to refresh bookings")
             self.stop_refreshing(logger, state=Lifecycle.FAILED)
-            raise BookingRefresherError(f"ошибка при получении актуальных проверок, задача остановлена: {e}") from e
+            raise BookingRefresherError(
+                f"ошибка при получении актуальных проверок, задача остановлена: {e.message}"
+            ) from e
 
     def _remove_expired_dry_bookings(self, now: AwareDatetime) -> None:
         non_expired_dry_bookings: dict[str, DryBooking] = {}

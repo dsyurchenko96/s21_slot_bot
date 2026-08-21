@@ -1,4 +1,5 @@
 import asyncio
+from http import HTTPStatus
 from typing import override
 
 import aiohttp
@@ -14,6 +15,7 @@ class School21RetryMiddleware(School21Middleware):
     def __init__(self, config: S21ClientConfig):
         self._attempts = config.max_request_retries
         self._delay_sec = config.retry_delay_sec
+        self._backoff = config.retry_backoff
 
     @override
     async def __call__(
@@ -22,10 +24,14 @@ class School21RetryMiddleware(School21Middleware):
         handler: ClientHandlerType,
     ) -> ClientResponse:
         logger = get_id_logger(LogEntity.MIDDLEWARE)
+        delay = self._delay_sec
         for attempt in range(1, self._attempts + 1):
             try:
-                return await handler(request)
-            except (TimeoutError, aiohttp.ClientConnectionError) as e:
+                response = await handler(request)
+                if response.status >= HTTPStatus.INTERNAL_SERVER_ERROR:
+                    response.raise_for_status()
+                return response
+            except (TimeoutError, aiohttp.ClientConnectionError, aiohttp.ClientResponseError) as e:
                 logger.warning(
                     "Request attempt %d/%d failed with %s: %s",
                     attempt,
@@ -36,7 +42,7 @@ class School21RetryMiddleware(School21Middleware):
                 if attempt == self._attempts:
                     logger.error("Request failed after %d attempts", self._attempts)
                     raise
-                delay = self._delay_sec * attempt
                 logger.info("Retrying request in %.1f seconds", delay)
                 await asyncio.sleep(delay)
+                delay *= self._backoff
         raise InternalError("недостижимое состояние retry middleware")
