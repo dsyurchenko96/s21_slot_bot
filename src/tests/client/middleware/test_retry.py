@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from http import HTTPStatus
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
@@ -64,6 +64,29 @@ class TestSchool21RetryMiddleware:
 
         assert handler.await_count == 3
         assert [call.args[0] for call in sleep.await_args_list] == [2, 4]
+
+    async def test_wrong_content_type_error_is_retried(
+        self,
+        s21_retry_middleware: School21RetryMiddleware,
+        request_mock: aiohttp.ClientRequest,
+        response_factory: Callable[..., aiohttp.ClientResponse],
+    ) -> None:
+        invalid_content_type_response = response_factory(status=HTTPStatus.OK)
+        invalid_content_type_response.json = AsyncMock(
+            side_effect=aiohttp.ContentTypeError(request_info=MagicMock(), history=())
+        )
+        ok_response = response_factory()
+        handler = AsyncMock(
+            side_effect=[
+                invalid_content_type_response,
+                ok_response,
+            ]
+        )
+
+        with patch("s21_slot_bot.client.middleware.retry.asyncio.sleep", new_callable=AsyncMock):
+            assert await s21_retry_middleware(request_mock, handler) is ok_response
+
+        assert handler.await_count == 2
 
     async def test_last_connection_error_is_reraised(
         self,

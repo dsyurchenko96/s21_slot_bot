@@ -30,6 +30,7 @@ class School21RetryMiddleware(School21Middleware):
                 response = await handler(request)
                 if response.status >= HTTPStatus.INTERNAL_SERVER_ERROR:
                     response.raise_for_status()
+                _ = await response.json()
                 return response
             except (TimeoutError, aiohttp.ClientConnectionError, aiohttp.ClientResponseError) as e:
                 logger.warning(
