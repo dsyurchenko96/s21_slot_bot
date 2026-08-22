@@ -100,7 +100,7 @@ class BotManager:
             return False
         inst.state = state
         has_running_bots = bool(self.list_all(states={Lifecycle.RUNNING}))
-        if not has_running_bots and self._bot_config.should_refresh_bookings_on_active_bots:
+        if not has_running_bots and self._bot_config.should_refresh_bookings_only_on_active_bots:
             self._booking_manager.stop_refreshing(logger)
         jobs = context.ensured_job_queue.get_jobs_by_name(bot_id)
         if not jobs:

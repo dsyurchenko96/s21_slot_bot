@@ -38,6 +38,7 @@ class TestTime:
             ),
             ("PT0S", lambda now: now),
             ("PT30M", lambda now: now + timedelta(minutes=30)),
+            ("+00:30", lambda now: now + timedelta(minutes=30)),
             ("PT2H", lambda now: now + timedelta(hours=2)),
             ("PT1H30M", lambda now: now + timedelta(hours=1, minutes=30)),
             ("P1D", lambda now: now + timedelta(days=1)),

@@ -92,7 +92,7 @@ class TestBotManager:
     ) -> None:
         inst = bot_instance_factory(state=Lifecycle.RUNNING)
         bot_manager._bots[inst.cfg.bot_id] = inst
-        bot_manager._bot_config.should_refresh_bookings_on_active_bots = True
+        bot_manager._bot_config.should_refresh_bookings_only_on_active_bots = True
         booking_manager.stop_refreshing = MagicMock()
 
         job_queue_mock.get_jobs_by_name.return_value = []

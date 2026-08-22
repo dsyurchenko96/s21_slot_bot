@@ -45,7 +45,7 @@ class TestSlotBotService:
     ) -> None:
         s21_client.start = AsyncMock()
         booking_manager.start_refreshing = AsyncMock()
-        config.bot.should_refresh_bookings_on_active_bots = False
+        config.bot.should_refresh_bookings_only_on_active_bots = False
         await service._post_init(tg_app_mock)
         s21_client.start.assert_awaited_once()
         booking_manager.start_refreshing.assert_awaited_once()
@@ -60,7 +60,7 @@ class TestSlotBotService:
     ) -> None:
         s21_client.start = AsyncMock()
         booking_manager.start_refreshing = AsyncMock()
-        config.bot.should_refresh_bookings_on_active_bots = True
+        config.bot.should_refresh_bookings_only_on_active_bots = True
         await service._post_init(tg_app_mock)
         booking_manager.start_refreshing.assert_not_awaited()
 

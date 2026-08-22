@@ -2,4 +2,5 @@ services:
   school21-bot:
     build: .
     restart: unless-stopped
+    container_name: "school21-bot"
     env_file: ".env"
