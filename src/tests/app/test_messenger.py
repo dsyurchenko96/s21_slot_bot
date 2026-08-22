@@ -17,14 +17,13 @@ class TestMessenger:
         self,
         messenger: Messenger,
         update_mock: Update,
+        message: Message,
         logger_mock: LoggerLike,
     ) -> None:
-        reply = MagicMock(spec=Message)
-        reply.message_id = 11
-        update_mock.message.reply_text = AsyncMock(return_value=reply)
+        update_mock.message.reply_text = AsyncMock()
         messenger.safe_delete = AsyncMock()
         await messenger.start_menu(update_mock, logger_mock)
-        assert [c.args[0] for c in messenger.safe_delete.await_args_list] == [10, 11]
+        assert messenger.safe_delete.await_args_list[0].args[0] == message.message_id
 
     async def test_start_menu_requires_message(
         self,

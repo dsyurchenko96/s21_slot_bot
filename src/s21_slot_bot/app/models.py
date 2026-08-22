@@ -66,7 +66,7 @@ class Mode(StrEnum):
     def to_emoji_text(self) -> tuple[str, str]:
         match self:
             case Mode.ONLY_FIND:
-                return "🔍", "найти слот без записи"
+                return "🔍", "только найти слот (без записи)"
             case Mode.FIND_AND_BOOK:
                 return "📝", "найти слоты и записаться"
 

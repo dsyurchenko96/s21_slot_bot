@@ -216,6 +216,7 @@ class BookingManager:
         dry_booking = self._dry_bookings.pop(dry_run_id, None)
         return dry_booking
 
+    # TODO: add checks and notifications for booked/cancelled when the user opened slots for review?
     async def _refresh_bookings(self, context: CustomContext) -> None:
         logger = get_id_logger(LogEntity.BOOKING_REFRESHER)
         logger.info("Refreshing bookings")

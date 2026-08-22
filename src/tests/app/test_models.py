@@ -22,7 +22,7 @@ class TestModels:
     @pytest.mark.parametrize(
         ("mode", "expected"),
         [
-            (Mode.ONLY_FIND, ("🔍", "найти слот без записи")),
+            (Mode.ONLY_FIND, ("🔍", "только найти слот (без записи)")),
             (Mode.FIND_AND_BOOK, ("📝", "найти слоты и записаться")),
         ],
     )

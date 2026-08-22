@@ -12,12 +12,12 @@ class BotConfig(BaseSettings):
     max_bots: NumBots = Field(
         alias="MAX_BOTS",
         description="Maximum number of total bots at a time",
-        default=3,
+        default=5,
     )
     poll_interval_sec: IntervalSec = Field(
         alias="POLL_INTERVAL_SEC",
         description="Interval (in seconds) between slot polling requests",
-        default=60,
+        default=30,
     )
     refresh_bookings_interval_sec: IntervalSec = Field(
         alias="REFRESH_BOOKINGS_INTERVAL_SEC",

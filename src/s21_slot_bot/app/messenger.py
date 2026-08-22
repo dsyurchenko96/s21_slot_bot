@@ -26,9 +26,11 @@ class Messenger:
     async def start_menu(self, update: Update, logger: LoggerLike) -> None:
         if not update.message:
             raise InternalError("сообщение не найдено")
+        await update.message.reply_text(
+            f'Приложение для поиска проверок в Школе 21 - нажми "{MenuButton.START}" для нового поиска',
+            reply_markup=MAIN_MENU_KB,
+        )
         await self.safe_delete(update.message.message_id, logger)
-        message = await update.message.reply_text("...", reply_markup=MAIN_MENU_KB)
-        await self.safe_delete(message.message_id, logger)
 
     async def send(
         self,
