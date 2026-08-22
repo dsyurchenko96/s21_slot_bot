@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 
+from s21_slot_bot.client.errors import School21Error
 from s21_slot_bot.client.middleware.retry import School21RetryMiddleware
 
 
@@ -97,6 +98,6 @@ class TestSchool21RetryMiddleware:
 
         with (
             patch("s21_slot_bot.client.middleware.retry.asyncio.sleep", new_callable=AsyncMock),
-            pytest.raises(aiohttp.ClientConnectionError, match="broken"),
+            pytest.raises(School21Error, match="broken"),
         ):
             await s21_retry_middleware(request_mock, handler)

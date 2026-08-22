@@ -7,6 +7,7 @@ from aiohttp import ClientHandlerType, ClientRequest, ClientResponse
 
 from s21_slot_bot.app.errors import InternalError
 from s21_slot_bot.client.config import S21ClientConfig
+from s21_slot_bot.client.errors import School21Error
 from s21_slot_bot.client.middleware.base import School21Middleware
 from s21_slot_bot.common.logger import LogEntity, get_id_logger
 
@@ -25,24 +26,32 @@ class School21RetryMiddleware(School21Middleware):
     ) -> ClientResponse:
         logger = get_id_logger(LogEntity.MIDDLEWARE)
         delay = self._delay_sec
+        resp_status: HTTPStatus | None = None
         for attempt in range(1, self._attempts + 1):
             try:
                 response = await handler(request)
-                if response.status >= HTTPStatus.INTERNAL_SERVER_ERROR:
+                resp_status = HTTPStatus(response.status)
+                if resp_status >= HTTPStatus.INTERNAL_SERVER_ERROR:
                     response.raise_for_status()
                 _ = await response.json()
                 return response
             except (TimeoutError, aiohttp.ClientConnectionError, aiohttp.ClientResponseError) as e:
+                error_description = f"{type(e).__name__} - {e}" if str(e) else type(e).__name__
                 logger.warning(
-                    "Request attempt %d/%d failed with %s: %s",
+                    "Request attempt %d/%d failed with %s",
                     attempt,
                     self._attempts,
-                    type(e).__name__,
-                    e,
+                    error_description,
                 )
                 if attempt == self._attempts:
                     logger.error("Request failed after %d attempts", self._attempts)
-                    raise
+                    raise School21Error(
+                        f"ошибка запроса к Школе 21: {error_description}",
+                        status=resp_status,
+                        location={
+                            "url": request.url.human_repr(),
+                        },
+                    ) from e
                 logger.info("Retrying request in %.1f seconds", delay)
                 await asyncio.sleep(delay)
                 delay *= self._backoff
