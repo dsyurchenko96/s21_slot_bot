@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 from datetime import datetime, timedelta
 from http import HTTPStatus
 from logging import Logger
@@ -7,7 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, create_autospec
 from zoneinfo import ZoneInfo
 
 import aiohttp
+import cashews
 import pytest
+import pytest_asyncio
 from _pytest.monkeypatch import MonkeyPatch
 from telegram import CallbackQuery, Message, Update, User
 from telegram.ext import Application, ApplicationBuilder, Defaults, ExtBot, Job, JobQueue
@@ -49,6 +51,20 @@ def response_context(response: aiohttp.ClientResponse) -> MagicMock:
     context = MagicMock()
     context.__aenter__ = AsyncMock(return_value=response)
     return context
+
+
+# ------------- CACHE -------------
+
+
+@pytest.fixture(scope="session", autouse=True)
+def setup_cache() -> None:
+    cashews.cache.setup("mem://")
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def clear_cache() -> AsyncGenerator[None, Any]:
+    yield
+    await cashews.cache.clear()
 
 
 # ------------- EXTERNAL ENTITY MOCKS -------------

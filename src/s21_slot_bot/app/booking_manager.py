@@ -3,6 +3,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Literal
 
+import cashews
 from pydantic import AwareDatetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -147,6 +148,7 @@ class BookingManager:
             parse_mode=ParseMode.MARKDOWN_V2,
         )
 
+    @cashews.invalidate("get_review_info:*")
     async def book(
         self,
         inst: BotInstance,
@@ -227,7 +229,8 @@ class BookingManager:
                 self._remove_expired_dry_bookings(now)
             context.ensured_chat_data.last_booking_refresh_time = now
             cancelled_bookings = self._get_cancelled_bookings(fresh_bookings, stale_bookings, now, logger)
-            await self._notify_on_cancelled_reviews(cancelled_bookings, context, logger)
+            if cancelled_bookings:
+                await self._notify_on_cancelled_reviews(cancelled_bookings, context, logger)
             for booking_id, booking in fresh_bookings.items():
                 if (
                     not is_expired_booking(booking, now)
@@ -284,14 +287,13 @@ class BookingManager:
         await self._messenger.send(context, text, parse_mode=ParseMode.MARKDOWN_V2)
         self._notifications_sent[booking.id] = True
 
+    @cashews.invalidate("get_review_info:*")
     async def _notify_on_cancelled_reviews(
         self,
         cancelled_bookings: list[Booking],
         context: CustomContext,
         logger: LoggerLike,
     ) -> None:
-        if not cancelled_bookings:
-            return
         tz = get_tzinfo(context)
         project_to_times: defaultdict[str, list[str]] = defaultdict(list)
         for booking in cancelled_bookings:

@@ -15,7 +15,7 @@ from s21_slot_bot.app.flows.collector import FlowCollector
 from s21_slot_bot.app.messenger import Messenger
 from s21_slot_bot.app.models import CustomContext, FlowCategory, Lifecycle, MenuButton, Screen
 from s21_slot_bot.app.utils import get_message_text
-from s21_slot_bot.common.error import Error
+from s21_slot_bot.common.error import Error, get_error_description
 from s21_slot_bot.common.logger import get_user_input_logger
 
 
@@ -96,18 +96,19 @@ class InputHandler:
     async def on_error(self, update: Update | object, context: CustomContext) -> None:
         logger = get_user_input_logger(update)
         error = context.error
+        error_description = get_error_description(error) if error else "отсутствует информация об ошибке"
         match error:
             case telegram.error.BadRequest():
                 if is_not_modified_tg_error(error):
                     logger.info("No update has taken place in error handle: %s", error)
                     return
-                await self._messenger.send(context, f"❌ ошибка обработки запроса телеграма: {error}")
+                await self._messenger.send(context, f"❌ ошибка обработки запроса телеграма - {error_description}")
             case MenuError():
-                await self._messenger.render_menu_error(context, error.to_pretty(), logger)
+                await self._messenger.render_menu_error(context, error_description, logger)
             case Error():
-                await self._messenger.send(context, error.to_pretty())
+                await self._messenger.send(context, error_description)
             case _:
-                await self._messenger.send(context, f"❌ неизвестная ошибка: {error}")
+                await self._messenger.send(context, f"❌ неизвестная ошибка - {error_description}")
         if (job := context.job) and job.name and job.name != BOOKING_REFRESHER_JOB_NAME:
             self._bot_manager.stop_bot(job.name, context, logger, state=Lifecycle.FAILED)
         logger.error("Exception while handling an update: %s", error, exc_info=error)

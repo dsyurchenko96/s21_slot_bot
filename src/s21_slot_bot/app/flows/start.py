@@ -54,9 +54,8 @@ class StartFlow(CustomInputFlow):
     @override
     def _get_project(self, context: CustomContext) -> ProjectExtended:
         start_project_id = context.ensured_chat_data.start_project_id
-        if not start_project_id:
-            raise InternalError("проект не выбран")
-        project = context.ensured_chat_data.projects_map[start_project_id]
+        if not start_project_id or not (project := context.ensured_chat_data.projects_map.get(start_project_id)):
+            raise InternalError("проект не найден")
         return project
 
     @override

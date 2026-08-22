@@ -1,13 +1,14 @@
 # ruff: noqa: BLE001
 import asyncio
+import functools
 import json
 from datetime import datetime
-from functools import cache
 from http import HTTPStatus
 from importlib.resources import files
 from typing import Any, NoReturn
 
 import aiohttp
+import cashews
 
 from s21_slot_bot.app.errors import AppNotInitializedError
 from s21_slot_bot.client.config import S21ClientConfig
@@ -42,6 +43,11 @@ from s21_slot_bot.common.logger import LoggerLike
 from s21_slot_bot.common.time import dt_to_isoz
 
 
+def _cache_ttl(self: School21Client, *args: Any, **kwargs: Any) -> int:
+    """Callable for cashews library to pass TTL dynamically"""
+    return self._cache_ttl_sec
+
+
 class School21Client:
     def __init__(
         self,
@@ -56,6 +62,7 @@ class School21Client:
         )
         self._auth_middleware = auth_middleware
         self._retry_middleware = retry_middleware
+        self._cache_ttl_sec = config.cache_ttl_sec
         self._session_internal: aiohttp.ClientSession | None = None
         self._user_id: str | None = None
         self._student_id: str | None = None
@@ -100,6 +107,7 @@ class School21Client:
         except Exception as e:
             self._raise_parsing_error(operation_name, e, data)
 
+    @cashews.cache(ttl=_cache_ttl, key="get_reviewed_projects:{user_id}")
     async def get_reviewed_projects(self, user_id: str, logger: LoggerLike) -> list[Project]:
         operation_name = OperationName.GET_CUR_PROJECTS
         data = await self._graphql(operation_name, {"userId": user_id}, logger)
@@ -129,6 +137,7 @@ class School21Client:
         except Exception as e:
             self._raise_parsing_error(operation_name, e, data)
 
+    @cashews.cache(ttl=_cache_ttl, key="get_local_course_goals:{course_id}")
     async def get_local_course_goals(self, course_id: str, logger: LoggerLike) -> list[Project]:
         operation_name = OperationName.GET_LOCAL_COURSE_GOALS
         data = await self._graphql(operation_name, {"localCourseId": course_id}, logger)
@@ -144,6 +153,7 @@ class School21Client:
         except Exception as e:
             self._raise_parsing_error(operation_name, e, data)
 
+    @cashews.cache(ttl=_cache_ttl, key="get_review_info:{goal_id}:{student_id}")
     async def get_review_info(self, goal_id: str, student_id: str, logger: LoggerLike) -> ReviewInfo:
         operation_name = OperationName.GET_PROJECT_INFO
         data = await self._graphql(operation_name, {"goalId": goal_id, "studentId": student_id}, logger)
@@ -298,7 +308,7 @@ class School21Client:
         ) from error
 
 
-@cache
+@functools.cache
 def _get_query(operation_name: OperationName) -> str:
     graphql = files(GRAPHQL_QUERIES_MODULE).joinpath(f"{operation_name}.graphql").read_text(encoding="utf-8").strip()
     return graphql

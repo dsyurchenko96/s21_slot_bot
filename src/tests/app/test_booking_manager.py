@@ -191,9 +191,6 @@ class TestBookingManager:
         now: datetime,
     ) -> None:
         messenger.send = AsyncMock()
-        await booking_manager._notify_on_cancelled_reviews([], context, logger_mock)
-        messenger.send.assert_not_awaited()
-
         bookings = [
             booking_factory(booking_id="1", project_name="P", start=now + timedelta(hours=1)),
             booking_factory(booking_id="2", project_name="P", start=now + timedelta(hours=2)),

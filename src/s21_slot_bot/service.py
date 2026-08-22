@@ -1,5 +1,8 @@
+from collections.abc import Callable
 from zoneinfo import ZoneInfo
 
+import cashews
+from cashews.backends.interface import Backend
 from telegram.ext import (
     ApplicationBuilder,
     CallbackQueryHandler,
@@ -28,6 +31,7 @@ class SlotBotService:
     def __init__(
         self,
         config: SlotBotServiceConfig,
+        cache_setup: Callable[..., Backend] = cashews.setup,
         s21_auth_middleware_factory: type[School21AuthMiddleware] = School21AuthMiddleware,
         s21_retry_middleware_factory: type[School21RetryMiddleware] = School21RetryMiddleware,
         s21_client_factory: type[School21Client] = School21Client,
@@ -39,6 +43,7 @@ class SlotBotService:
         input_handler_factory: type[InputHandler] = InputHandler,
     ):
         self._config = config
+        self._cache_setup = cache_setup
         s21_auth_middleware = s21_auth_middleware_factory(config=config.s21)
         s21_retry_middleware = s21_retry_middleware_factory(config=config.s21)
         self._s21_client = s21_client_factory(
@@ -102,6 +107,7 @@ class SlotBotService:
     async def _post_init(self, _: App) -> None:
         logger = get_id_logger(LogEntity.SERVICE_HOOK)
         logger.info("Running custom post-init application hook...")
+        self._cache_setup("mem://")
         await self._s21_client.start()
         if not self._config.bot.should_refresh_bookings_on_active_bots:
             await self._booking_manager.start_refreshing(logger, run_immediately=False)

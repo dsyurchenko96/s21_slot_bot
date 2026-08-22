@@ -42,3 +42,13 @@ class Error(Exception):
         if status := self.effective_status:
             text += f"\nстатус: {status} ({status.phrase})"
         return text
+
+
+def get_error_description(exc: Exception) -> str:
+    match exc:
+        case Error():
+            return exc.to_pretty()
+        case _:
+            error_type, error_message = type(exc).__name__, str(exc)
+            description = f"{error_type}: {error_message}" if error_message else error_type
+            return description

@@ -9,6 +9,7 @@ from s21_slot_bot.app.errors import InternalError
 from s21_slot_bot.client.config import S21ClientConfig
 from s21_slot_bot.client.errors import School21Error
 from s21_slot_bot.client.middleware.base import School21Middleware
+from s21_slot_bot.common.error import get_error_description
 from s21_slot_bot.common.logger import LogEntity, get_id_logger
 
 
@@ -36,7 +37,7 @@ class School21RetryMiddleware(School21Middleware):
                 _ = await response.json()
                 return response
             except (TimeoutError, aiohttp.ClientConnectionError, aiohttp.ClientResponseError) as e:
-                error_description = f"{type(e).__name__} - {e}" if str(e) else type(e).__name__
+                error_description = get_error_description(e)
                 logger.warning(
                     "Request attempt %d/%d failed with %s",
                     attempt,
